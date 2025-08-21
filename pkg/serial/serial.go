@@ -3,9 +3,13 @@ package serial
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 	
 	"go.bug.st/serial"
+	"go.bug.st/serial/enumerator"
 )
 
 // SerialConfig defines the configuration for serial port communication
@@ -308,33 +312,100 @@ func convertParity(parity string) serial.Parity {
 
 // PortInfo contains information about a serial port
 type PortInfo struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	VID         string `json:"vid,omitempty"`
-	PID         string `json:"pid,omitempty"`
+	Name         string `json:"name"`
+	IsUSB        bool   `json:"is_usb,omitempty"`
+	VID          string `json:"vid,omitempty"`
+	PID          string `json:"pid,omitempty"`
 	SerialNumber string `json:"serial_number,omitempty"`
+	Product      string `json:"product,omitempty"`
 }
 
 // GetDetailedPortsList returns detailed information about available serial ports
 func GetDetailedPortsList() ([]PortInfo, error) {
-	ports, err := serial.GetPortsList()
+	// Try to get detailed port information first
+	detailedPorts, err := enumerator.GetDetailedPortsList()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get ports list: %w", err)
-	}
-	
-	var portInfos []PortInfo
-	for _, portName := range ports {
-		portInfo := PortInfo{
-			Name: portName,
+		// Fall back to basic port list if detailed info fails
+		ports, err := serial.GetPortsList()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get ports list: %w", err)
 		}
 		
-		// Note: Additional port details would require platform-specific implementation
-		// For now, we just provide the port name
+		var portInfos []PortInfo
+		for _, portName := range ports {
+			portInfos = append(portInfos, PortInfo{
+				Name: portName,
+			})
+		}
 		
+		// Sort ports by name
+		sortPorts(portInfos)
+		return portInfos, nil
+	}
+	
+	// Convert detailed ports to our PortInfo structure
+	var portInfos []PortInfo
+	for _, port := range detailedPorts {
+		portInfo := PortInfo{
+			Name:         port.Name,
+			IsUSB:        port.IsUSB,
+			VID:          port.VID,
+			PID:          port.PID,
+			SerialNumber: port.SerialNumber,
+			Product:      port.Product,
+		}
 		portInfos = append(portInfos, portInfo)
 	}
 	
+	// Sort ports by name
+	sortPorts(portInfos)
+	
 	return portInfos, nil
+}
+
+// sortPorts sorts the port list in a natural order
+func sortPorts(ports []PortInfo) {
+	sort.Slice(ports, func(i, j int) bool {
+		// Try to extract port numbers for natural sorting
+		pi := extractPortNumber(ports[i].Name)
+		pj := extractPortNumber(ports[j].Name)
+		
+		if pi != pj && pi >= 0 && pj >= 0 {
+			return pi < pj
+		}
+		
+		// Fall back to string comparison
+		return ports[i].Name < ports[j].Name
+	})
+}
+
+// extractPortNumber extracts the port number from a port name
+func extractPortNumber(portName string) int {
+	// For Windows COM ports
+	if strings.HasPrefix(portName, "COM") {
+		if num, err := strconv.Atoi(portName[3:]); err == nil {
+			return num
+		}
+	}
+	
+	// For Unix-like /dev/ttyUSB0, /dev/ttyS0, etc.
+	parts := strings.Split(portName, "/")
+	if len(parts) > 0 {
+		lastPart := parts[len(parts)-1]
+		// Try to find a number at the end
+		for i := len(lastPart) - 1; i >= 0; i-- {
+			if lastPart[i] < '0' || lastPart[i] > '9' {
+				if i < len(lastPart)-1 {
+					if num, err := strconv.Atoi(lastPart[i+1:]); err == nil {
+						return num
+					}
+				}
+				break
+			}
+		}
+	}
+	
+	return -1
 }
 
 // IsPortAvailable checks if a specific port is available
@@ -678,8 +749,28 @@ func NewSerialPort() SerialPort {
 }
 
 // ListPorts returns a list of available serial ports on the system (global function)
+// ListPorts returns a sorted list of available serial ports
 func ListPorts() ([]string, error) {
-	return serial.GetPortsList()
+	ports, err := serial.GetPortsList()
+	if err != nil {
+		return nil, err
+	}
+	
+	// Sort ports naturally
+	sort.Slice(ports, func(i, j int) bool {
+		// Try to extract port numbers for natural sorting
+		pi := extractPortNumber(ports[i])
+		pj := extractPortNumber(ports[j])
+		
+		if pi != pj && pi >= 0 && pj >= 0 {
+			return pi < pj
+		}
+		
+		// Fall back to string comparison
+		return ports[i] < ports[j]
+	})
+	
+	return ports, nil
 }
 
 // HealthChecker provides health checking capabilities for serial connections

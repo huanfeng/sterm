@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"runtime"
-	"text/tabwriter"
 	
 	"github.com/spf13/cobra"
 	"serial-terminal/pkg/serial"
@@ -36,14 +34,14 @@ func init() {
 }
 
 func runList(cmd *cobra.Command, args []string) {
-	// Get list of available ports
-	ports, err := serial.ListPorts()
+	// Get detailed list of available ports
+	portInfos, err := serial.GetDetailedPortsList()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error listing ports: %v\n", err)
 		os.Exit(1)
 	}
 	
-	if len(ports) == 0 {
+	if len(portInfos) == 0 {
 		fmt.Println("No serial ports found.")
 		return
 	}
@@ -51,147 +49,111 @@ func runList(cmd *cobra.Command, args []string) {
 	// Display based on format
 	switch listFormat {
 	case "csv":
-		printPortsCSV(ports)
+		printPortsCSV(portInfos)
 	case "json":
-		printPortsJSON(ports)
+		printPortsJSON(portInfos)
 	default:
-		printPortsTable(ports)
+		printPortsTable(portInfos)
 	}
 }
 
-func printPortsTable(ports []string) {
-	fmt.Printf("Found %d serial port(s) on %s:\n\n", len(ports), runtime.GOOS)
+func printPortsTable(portInfos []serial.PortInfo) {
+	fmt.Printf("Found %d serial port(s):\n", len(portInfos))
 	
 	if listDetails {
-		// Create a tabwriter for aligned output
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "PORT\tSTATUS\tDESCRIPTION")
-		fmt.Fprintln(w, "----\t------\t-----------")
-		
-		for _, port := range ports {
-			status := "Available"
-			description := getPortDescription(port)
+		// Show detailed information if available
+		for _, portInfo := range portInfos {
+			fmt.Printf("  %s", portInfo.Name)
 			
-			// Try to open port to check if it's in use
-			sp := serial.NewSerialPort()
-			err := sp.Open(serial.SerialConfig{
-				Port:     port,
-				BaudRate: 9600,
-				DataBits: 8,
-				StopBits: 1,
-				Parity:   "none",
-				Timeout:  1,
-			})
-			
-			if err != nil {
-				status = "In Use"
-			} else {
-				sp.Close()
+			// Add USB details if available
+			if portInfo.IsUSB {
+				fmt.Printf(" [USB]")
+				if portInfo.VID != "" || portInfo.PID != "" {
+					fmt.Printf(" VID:%s PID:%s", portInfo.VID, portInfo.PID)
+				}
+				if portInfo.Product != "" {
+					fmt.Printf(" - %s", portInfo.Product)
+				}
+				if portInfo.SerialNumber != "" {
+					fmt.Printf(" (SN: %s)", portInfo.SerialNumber)
+				}
 			}
-			
-			fmt.Fprintf(w, "%s\t%s\t%s\n", port, status, description)
+			fmt.Println()
 		}
-		
-		w.Flush()
 	} else {
-		// Simple list
-		for _, port := range ports {
-			fmt.Printf("  %s\n", port)
+		// Simple list with indentation for table format
+		for _, portInfo := range portInfos {
+			fmt.Printf("  %s\n", portInfo.Name)
 		}
 	}
 	
-	fmt.Println("\nUse 'serial-terminal connect <port>' to connect to a specific port.")
+	fmt.Println("\nUse 'serial-terminal connect <port>' or 'serial-terminal c <port>' to connect.")
 }
 
-func printPortsCSV(ports []string) {
-	fmt.Println("port,status,description")
-	for _, port := range ports {
-		status := "available"
-		
-		// Try to open port to check if it's in use
-		sp := serial.NewSerialPort()
-		err := sp.Open(serial.SerialConfig{
-			Port:     port,
-			BaudRate: 9600,
-			DataBits: 8,
-			StopBits: 1,
-			Parity:   "none",
-			Timeout:  1,
-		})
-		
-		if err != nil {
-			status = "in_use"
-		} else {
-			sp.Close()
+func printPortsCSV(portInfos []serial.PortInfo) {
+	if listDetails {
+		fmt.Println("port,is_usb,vid,pid,product,serial_number")
+		for _, portInfo := range portInfos {
+			fmt.Printf("%s,%t,%s,%s,%s,%s\n", 
+				portInfo.Name,
+				portInfo.IsUSB,
+				portInfo.VID,
+				portInfo.PID,
+				portInfo.Product,
+				portInfo.SerialNumber)
 		}
-		
-		fmt.Printf("%s,%s,%s\n", port, status, getPortDescription(port))
+	} else {
+		fmt.Println("port")
+		for _, portInfo := range portInfos {
+			fmt.Printf("%s\n", portInfo.Name)
+		}
 	}
 }
 
-func printPortsJSON(ports []string) {
-	fmt.Println("[")
-	for i, port := range ports {
-		status := "available"
-		
-		// Try to open port to check if it's in use
-		sp := serial.NewSerialPort()
-		err := sp.Open(serial.SerialConfig{
-			Port:     port,
-			BaudRate: 9600,
-			DataBits: 8,
-			StopBits: 1,
-			Parity:   "none",
-			Timeout:  1,
-		})
-		
-		if err != nil {
-			status = "in_use"
-		} else {
-			sp.Close()
+func printPortsJSON(portInfos []serial.PortInfo) {
+	if listDetails {
+		// Output full JSON objects with details
+		fmt.Println("[")
+		for i, portInfo := range portInfos {
+			fmt.Printf("  {\n")
+			fmt.Printf("    \"name\": \"%s\"", portInfo.Name)
+			
+			if portInfo.IsUSB {
+				fmt.Printf(",\n    \"is_usb\": true")
+				if portInfo.VID != "" {
+					fmt.Printf(",\n    \"vid\": \"%s\"", portInfo.VID)
+				}
+				if portInfo.PID != "" {
+					fmt.Printf(",\n    \"pid\": \"%s\"", portInfo.PID)
+				}
+				if portInfo.Product != "" {
+					fmt.Printf(",\n    \"product\": \"%s\"", portInfo.Product)
+				}
+				if portInfo.SerialNumber != "" {
+					fmt.Printf(",\n    \"serial_number\": \"%s\"", portInfo.SerialNumber)
+				}
+			}
+			
+			fmt.Printf("\n  }")
+			if i < len(portInfos)-1 {
+				fmt.Printf(",")
+			}
+			fmt.Printf("\n")
 		}
-		
-		fmt.Printf("  {\n")
-		fmt.Printf("    \"port\": \"%s\",\n", port)
-		fmt.Printf("    \"status\": \"%s\",\n", status)
-		fmt.Printf("    \"description\": \"%s\"\n", getPortDescription(port))
-		
-		if i < len(ports)-1 {
-			fmt.Printf("  },\n")
-		} else {
-			fmt.Printf("  }\n")
+		fmt.Println("]")
+	} else {
+		// Simple array of port names
+		fmt.Println("[")
+		for i, portInfo := range portInfos {
+			fmt.Printf("  \"%s\"", portInfo.Name)
+			
+			if i < len(portInfos)-1 {
+				fmt.Printf(",\n")
+			} else {
+				fmt.Printf("\n")
+			}
 		}
+		fmt.Println("]")
 	}
-	fmt.Println("]")
 }
 
-func getPortDescription(port string) string {
-	// This is a placeholder - in a real implementation, we would
-	// query system information to get device descriptions
-	switch runtime.GOOS {
-	case "windows":
-		return "USB Serial Device"
-	case "linux":
-		if len(port) > 8 && port[:8] == "/dev/tty" {
-			if port[8:9] == "U" {
-				return "USB Serial Device"
-			}
-			if port[8:9] == "S" {
-				return "System Serial Port"
-			}
-		}
-		return "Serial Device"
-	case "darwin":
-		if len(port) > 8 {
-			if port[:8] == "/dev/cu." {
-				return "USB Serial Device (Callout)"
-			}
-			if port[:9] == "/dev/tty." {
-				return "USB Serial Device (TTY)"
-			}
-		}
-		return "Serial Device"
-	default:
-		return "Serial Device"
-	}
-}

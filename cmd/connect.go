@@ -12,6 +12,16 @@ import (
 	"serial-terminal/pkg/serial"
 )
 
+var (
+	// Connect command flags
+	connectPort     string
+	connectBaudRate int
+	connectDataBits int
+	connectStopBits int
+	connectParity   string
+	connectTimeout  int
+)
+
 // connectCmd represents the connect command
 var connectCmd = &cobra.Command{
 	Use:   "connect <port|config>",
@@ -32,17 +42,17 @@ Examples:
   # Connect using a saved configuration
   serial-terminal connect mydevice`,
 	Args:    cobra.ExactArgs(1),
-	Aliases: []string{"open"},
+	Aliases: []string{"c", "open"},
 	Run:     runConnect,
 }
 
 func init() {
 	// Add flags for connect command
-	connectCmd.Flags().IntVarP(&baudRate, "baud", "b", 115200, "baud rate")
-	connectCmd.Flags().IntVarP(&dataBits, "data", "d", 8, "data bits (5, 6, 7, or 8)")
-	connectCmd.Flags().IntVarP(&stopBits, "stop", "s", 1, "stop bits (1 or 2)")
-	connectCmd.Flags().StringVar(&parity, "parity", "none", "parity (none, odd, even, mark, space)")
-	connectCmd.Flags().IntVarP(&timeout, "timeout", "t", 10, "read timeout in seconds")
+	connectCmd.Flags().IntVarP(&connectBaudRate, "baud", "b", 115200, "baud rate")
+	connectCmd.Flags().IntVarP(&connectDataBits, "data", "d", 8, "data bits (5, 6, 7, or 8)")
+	connectCmd.Flags().IntVarP(&connectStopBits, "stop", "s", 1, "stop bits (1 or 2)")
+	connectCmd.Flags().StringVar(&connectParity, "parity", "none", "parity (none, odd, even, mark, space)")
+	connectCmd.Flags().IntVarP(&connectTimeout, "timeout", "t", 10, "read timeout in seconds")
 }
 
 func runConnect(cmd *cobra.Command, args []string) {
@@ -54,11 +64,11 @@ func runConnect(cmd *cobra.Command, args []string) {
 		// Direct port connection
 		serialConfig = serial.SerialConfig{
 			Port:     target,
-			BaudRate: baudRate,
-			DataBits: dataBits,
-			StopBits: stopBits,
-			Parity:   parity,
-			Timeout:  time.Duration(timeout) * time.Second,
+			BaudRate: connectBaudRate,
+			DataBits: connectDataBits,
+			StopBits: connectStopBits,
+			Parity:   connectParity,
+			Timeout:  time.Duration(connectTimeout) * time.Second,
 		}
 		
 		// Validate configuration
@@ -67,12 +77,13 @@ func runConnect(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 		
-		if verbose {
+		v, _ := cmd.InheritedFlags().GetBool("verbose")
+		if v {
 			fmt.Printf("Connecting to port %s...\n", target)
-			fmt.Printf("  Baud Rate: %d\n", baudRate)
-			fmt.Printf("  Data Bits: %d\n", dataBits)
-			fmt.Printf("  Stop Bits: %d\n", stopBits)
-			fmt.Printf("  Parity: %s\n", parity)
+			fmt.Printf("  Baud Rate: %d\n", connectBaudRate)
+			fmt.Printf("  Data Bits: %d\n", connectDataBits)
+			fmt.Printf("  Stop Bits: %d\n", connectStopBits)
+			fmt.Printf("  Parity: %s\n", connectParity)
 		}
 	} else {
 		// Try to load as configuration
@@ -108,7 +119,8 @@ func runConnect(cmd *cobra.Command, args []string) {
 		
 		serialConfig = cfg
 		
-		if verbose {
+		v, _ := cmd.InheritedFlags().GetBool("verbose")
+		if v {
 			fmt.Printf("Loading configuration '%s'...\n", target)
 			fmt.Printf("  Port: %s\n", cfg.Port)
 			fmt.Printf("  Baud Rate: %d\n", cfg.BaudRate)

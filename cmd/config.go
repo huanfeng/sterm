@@ -12,6 +12,16 @@ import (
 	"serial-terminal/pkg/serial"
 )
 
+var (
+	// Config command flags
+	configPort     string
+	configBaudRate int
+	configDataBits int
+	configStopBits int
+	configParity   string
+	configTimeout  int
+)
+
 // configCmd represents the config command
 var configCmd = &cobra.Command{
 	Use:   "config",
@@ -88,12 +98,12 @@ func init() {
 	configCmd.AddCommand(showCmd)
 	
 	// Add flags for save command
-	saveCmd.Flags().StringVarP(&port, "port", "p", "", "serial port")
-	saveCmd.Flags().IntVarP(&baudRate, "baud", "b", 115200, "baud rate")
-	saveCmd.Flags().IntVarP(&dataBits, "data", "d", 8, "data bits")
-	saveCmd.Flags().IntVarP(&stopBits, "stop", "s", 1, "stop bits")
-	saveCmd.Flags().StringVar(&parity, "parity", "none", "parity")
-	saveCmd.Flags().IntVarP(&timeout, "timeout", "t", 10, "timeout in seconds")
+	saveCmd.Flags().StringVarP(&configPort, "port", "p", "", "serial port")
+	saveCmd.Flags().IntVarP(&configBaudRate, "baud", "b", 115200, "baud rate")
+	saveCmd.Flags().IntVarP(&configDataBits, "data", "d", 8, "data bits")
+	saveCmd.Flags().IntVarP(&configStopBits, "stop", "s", 1, "stop bits")
+	saveCmd.Flags().StringVar(&configParity, "parity", "none", "parity")
+	saveCmd.Flags().IntVarP(&configTimeout, "timeout", "t", 10, "timeout in seconds")
 	saveCmd.MarkFlagRequired("port")
 }
 
@@ -102,12 +112,12 @@ func runSaveConfig(cmd *cobra.Command, args []string) {
 	
 	// Create configuration
 	cfg := serial.SerialConfig{
-		Port:     port,
-		BaudRate: baudRate,
-		DataBits: dataBits,
-		StopBits: stopBits,
-		Parity:   parity,
-		Timeout:  time.Duration(timeout) * time.Second,
+		Port:     configPort,
+		BaudRate: configBaudRate,
+		DataBits: configDataBits,
+		StopBits: configStopBits,
+		Parity:   configParity,
+		Timeout:  time.Duration(configTimeout) * time.Second,
 	}
 	
 	// Validate configuration
