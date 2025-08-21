@@ -24,16 +24,50 @@ func (c SerialConfig) Validate() error {
 		return fmt.Errorf("port cannot be empty")
 	}
 	
-	validBaudRates := []int{9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600}
-	validBaud := false
-	for _, rate := range validBaudRates {
+	// Common standard baud rates
+	standardBaudRates := []int{
+		110, 300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 38400, 
+		57600, 115200, 128000, 230400, 256000, 460800, 500000, 576000,
+		921600, 1000000, 1152000, 1500000, 2000000, 2500000, 3000000,
+		3500000, 4000000,
+	}
+	
+	// Special baud rates often used in embedded systems
+	specialBaudRates := []int{
+		74880,   // ESP8266 boot mode
+		250000,  // 3D printers
+		876000,  // Some USB-UART chips
+		1843200, // High speed UART
+	}
+	
+	// Check if it's a standard rate
+	isStandard := false
+	for _, rate := range standardBaudRates {
 		if c.BaudRate == rate {
-			validBaud = true
+			isStandard = true
 			break
 		}
 	}
-	if !validBaud {
-		return fmt.Errorf("invalid baud rate: %d", c.BaudRate)
+	
+	// Check if it's a special rate
+	if !isStandard {
+		for _, rate := range specialBaudRates {
+			if c.BaudRate == rate {
+				isStandard = true
+				break
+			}
+		}
+	}
+	
+	// Allow any positive baud rate, but warn for non-standard rates
+	if c.BaudRate <= 0 {
+		return fmt.Errorf("baud rate must be positive, got: %d", c.BaudRate)
+	}
+	
+	// For very high or unusual rates, just warn (don't error)
+	if !isStandard && c.BaudRate > 4000000 {
+		// This is just a warning in the validation, actual support depends on hardware
+		// The go.bug.st/serial library will handle hardware limitations
 	}
 	
 	if c.DataBits < 5 || c.DataBits > 8 {
@@ -61,6 +95,30 @@ func (c SerialConfig) Validate() error {
 	}
 	
 	return nil
+}
+
+// GetCommonBaudRates returns a list of commonly used baud rates
+func GetCommonBaudRates() []int {
+	return []int{
+		300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 38400,
+		57600, 115200, 230400, 460800, 500000, 576000, 921600,
+		1000000, 1500000, 2000000, 3000000, 4000000,
+	}
+}
+
+// GetSpecialBaudRates returns special baud rates for specific devices
+func GetSpecialBaudRates() []int {
+	return []int{
+		74880,   // ESP8266 boot mode
+		250000,  // 3D printers
+		876000,  // Some USB-UART chips
+		1843200, // High speed UART
+	}
+}
+
+// IsValidBaudRate checks if a baud rate is valid (any positive integer)
+func IsValidBaudRate(baudRate int) bool {
+	return baudRate > 0
 }
 
 // DefaultConfig returns a default serial configuration
