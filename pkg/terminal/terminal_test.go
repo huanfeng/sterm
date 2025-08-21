@@ -594,6 +594,265 @@ func TestVTParser_ParseByte_SGR(t *testing.T) {
 	}
 }
 
+func TestVTParser_ParseByte_ComplexSequences(t *testing.T) {
+	parser := NewVTParser()
+	screen := NewScreen(80, 24)
+	state := DefaultTerminalState(80, 24)
+	
+	tests := []struct {
+		name     string
+		sequence []byte
+		expectedActions []struct {
+			actionType ActionType
+			validation func(Action) bool
+		}
+	}{
+		{
+			name: "Erase to end of line",
+			sequence: []byte{0x1B, '[', 'K'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionClearLine, func(a Action) bool { return a.Data == 0 }},
+			},
+		},
+		{
+			name: "Erase entire line",
+			sequence: []byte{0x1B, '[', '2', 'K'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionClearLine, func(a Action) bool { return a.Data == 2 }},
+			},
+		},
+		{
+			name: "Set scroll region",
+			sequence: []byte{0x1B, '[', '5', ';', '2', '0', 'r'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionSetScrollRegion, func(a Action) bool {
+					if region, ok := a.Data.(ScrollRegion); ok {
+						return region.Top == 4 && region.Bottom == 19
+					}
+					return false
+				}},
+			},
+		},
+		{
+			name: "Delete characters",
+			sequence: []byte{0x1B, '[', '3', 'P'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionDeleteChar, func(a Action) bool { return a.Data == 3 }},
+			},
+		},
+		{
+			name: "Insert characters",
+			sequence: []byte{0x1B, '[', '2', '@'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionInsertChar, func(a Action) bool { return a.Data == 2 }},
+			},
+		},
+		{
+			name: "Hide cursor",
+			sequence: []byte{0x1B, '[', '2', '5', 'l'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionSetMode, func(a Action) bool { return a.Data == "cursor_hidden" }},
+			},
+		},
+		{
+			name: "Show cursor",
+			sequence: []byte{0x1B, '[', '2', '5', 'h'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionSetMode, func(a Action) bool { return a.Data == "cursor_visible" }},
+			},
+		},
+		{
+			name: "Enable mouse tracking",
+			sequence: []byte{0x1B, '[', '1', '0', '0', '0', 'h'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionSetMode, func(a Action) bool { return a.Data == "mouse_x10" }},
+			},
+		},
+		{
+			name: "Alternative screen buffer",
+			sequence: []byte{0x1B, '[', '1', '0', '4', '9', 'h'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				{ActionSetMode, func(a Action) bool { return a.Data == "alt_screen" }},
+			},
+		},
+		{
+			name: "256 color foreground",
+			sequence: []byte{0x1B, '[', '3', '8', ';', '5', ';', '1', '2', '3', 'm'},
+			expectedActions: []struct {
+				actionType ActionType
+				validation func(Action) bool
+			}{
+				// This would require extending the parser to handle 256 colors
+				// For now, we test that it doesn't crash
+			},
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser.Reset()
+			var actions []Action
+			
+			for _, b := range tt.sequence {
+				newActions := parser.ParseByte(b, screen, &state)
+				actions = append(actions, newActions...)
+			}
+			
+			if len(tt.expectedActions) > 0 {
+				if len(actions) != len(tt.expectedActions) {
+					t.Errorf("%s: got %d actions, want %d", tt.name, len(actions), len(tt.expectedActions))
+					return
+				}
+				
+				for i, expected := range tt.expectedActions {
+					if actions[i].Type != expected.actionType {
+						t.Errorf("%s: action[%d] type = %v, want %v", tt.name, i, actions[i].Type, expected.actionType)
+					}
+					
+					if expected.validation != nil && !expected.validation(actions[i]) {
+						t.Errorf("%s: action[%d] validation failed", tt.name, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestVTParser_ParseByte_EscapeSequences(t *testing.T) {
+	parser := NewVTParser()
+	screen := NewScreen(80, 24)
+	state := DefaultTerminalState(80, 24)
+	
+	tests := []struct {
+		name     string
+		sequence []byte
+		expectedAction ActionType
+	}{
+		{"Index", []byte{0x1B, 'D'}, ActionScroll},
+		{"Reverse Index", []byte{0x1B, 'M'}, ActionScroll},
+		{"Next Line", []byte{0x1B, 'E'}, ActionNewline},
+		{"Set Keypad Application Mode", []byte{0x1B, '='}, ActionSetMode},
+		{"Set Keypad Numeric Mode", []byte{0x1B, '>'}, ActionSetMode},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser.Reset()
+			var actions []Action
+			
+			for _, b := range tt.sequence {
+				newActions := parser.ParseByte(b, screen, &state)
+				actions = append(actions, newActions...)
+			}
+			
+			if len(actions) == 0 {
+				t.Errorf("%s: no actions returned", tt.name)
+				return
+			}
+			
+			found := false
+			for _, action := range actions {
+				if action.Type == tt.expectedAction {
+					found = true
+					break
+				}
+			}
+			
+			if !found {
+				t.Errorf("%s: expected action type %v not found", tt.name, tt.expectedAction)
+			}
+		})
+	}
+}
+
+func TestVTParser_ParseByte_BrightColors(t *testing.T) {
+	parser := NewVTParser()
+	screen := NewScreen(80, 24)
+	state := DefaultTerminalState(80, 24)
+	
+	tests := []struct {
+		name     string
+		sequence []byte
+		expectedColor Color
+		isForeground bool
+	}{
+		{"Bright Red Foreground", []byte{0x1B, '[', '9', '1', 'm'}, ColorBrightRed, true},
+		{"Bright Green Foreground", []byte{0x1B, '[', '9', '2', 'm'}, ColorBrightGreen, true},
+		{"Bright Yellow Foreground", []byte{0x1B, '[', '9', '3', 'm'}, ColorBrightYellow, true},
+		{"Bright Blue Foreground", []byte{0x1B, '[', '9', '4', 'm'}, ColorBrightBlue, true},
+		{"Bright Magenta Foreground", []byte{0x1B, '[', '9', '5', 'm'}, ColorBrightMagenta, true},
+		{"Bright Cyan Foreground", []byte{0x1B, '[', '9', '6', 'm'}, ColorBrightCyan, true},
+		{"Bright White Foreground", []byte{0x1B, '[', '9', '7', 'm'}, ColorBrightWhite, true},
+		{"Bright Red Background", []byte{0x1B, '[', '1', '0', '1', 'm'}, ColorBrightRed, false},
+		{"Bright Green Background", []byte{0x1B, '[', '1', '0', '2', 'm'}, ColorBrightGreen, false},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser.Reset()
+			var actions []Action
+			
+			for _, b := range tt.sequence {
+				newActions := parser.ParseByte(b, screen, &state)
+				actions = append(actions, newActions...)
+			}
+			
+			if len(actions) != 1 {
+				t.Errorf("%s: got %d actions, want 1", tt.name, len(actions))
+				return
+			}
+			
+			if actions[0].Type != ActionSetAttribute {
+				t.Errorf("%s: action type = %v, want %v", tt.name, actions[0].Type, ActionSetAttribute)
+				return
+			}
+			
+			attr, ok := actions[0].Data.(AttributeChange)
+			if !ok {
+				t.Errorf("%s: action data is not AttributeChange", tt.name)
+				return
+			}
+			
+			if tt.isForeground {
+				if attr.Foreground == nil || *attr.Foreground != tt.expectedColor {
+					t.Errorf("%s: foreground color = %v, want %v", tt.name, attr.Foreground, tt.expectedColor)
+				}
+			} else {
+				if attr.Background == nil || *attr.Background != tt.expectedColor {
+					t.Errorf("%s: background color = %v, want %v", tt.name, attr.Background, tt.expectedColor)
+				}
+			}
+		})
+	}
+}
+
 func TestVTParser_parseParams(t *testing.T) {
 	parser := NewVTParser()
 	
@@ -915,6 +1174,83 @@ func TestTerminalEmulator_SetAttribute(t *testing.T) {
 	defaultAttrs := DefaultTextAttributes()
 	if emulator.state.Attributes != defaultAttrs {
 		t.Error("Attributes should be reset to default")
+	}
+}
+
+func TestTerminalEmulator_CompleteANSIProcessing(t *testing.T) {
+	emulator := NewTerminalEmulator(nil, nil, 80, 24)
+	emulator.Start()
+	
+	tests := []struct {
+		name        string
+		output      []byte
+		verify      func(*testing.T, *TerminalEmulator)
+	}{
+		{
+			name: "Text with color codes",
+			output: []byte("\x1B[31mRed\x1B[0m Normal \x1B[1;32mBold Green\x1B[0m"),
+			verify: func(t *testing.T, te *TerminalEmulator) {
+				// After processing, verify the screen buffer contains the text
+				expectedText := "Red Normal Bold Green"
+				var actualText string
+				for x := 0; x < len(expectedText) && x < te.state.Width; x++ {
+					if te.screen.Buffer[0][x].Char != ' ' {
+						actualText += string(te.screen.Buffer[0][x].Char)
+					}
+				}
+				if len(actualText) == 0 {
+					t.Error("No text found in screen buffer")
+				}
+			},
+		},
+		{
+			name: "Cursor positioning and clear",
+			output: []byte("Hello\x1B[H\x1B[2JCleared"),
+			verify: func(t *testing.T, te *TerminalEmulator) {
+				// After clear screen, only "Cleared" should be visible
+				if te.state.CursorX != 7 { // Length of "Cleared"
+					t.Errorf("CursorX = %d, want 7", te.state.CursorX)
+				}
+				if te.state.CursorY != 0 {
+					t.Errorf("CursorY = %d, want 0", te.state.CursorY)
+				}
+			},
+		},
+		{
+			name: "Tab and newline handling",
+			output: []byte("A\tB\nC\rD"),
+			verify: func(t *testing.T, te *TerminalEmulator) {
+				// A should be at position 0
+				if te.screen.Buffer[0][0].Char != 'A' {
+					t.Errorf("Char at (0,0) = %c, want A", te.screen.Buffer[0][0].Char)
+				}
+				// B should be at tab position (8)
+				if te.screen.Buffer[0][8].Char != 'B' {
+					t.Errorf("Char at (8,0) = %c, want B", te.screen.Buffer[0][8].Char)
+				}
+				// D should be at position 0 of line 1 (after CR)
+				if te.screen.Buffer[1][0].Char != 'D' {
+					t.Errorf("Char at (0,1) = %c, want D", te.screen.Buffer[1][0].Char)
+				}
+			},
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset emulator for each test
+			emulator.screen = NewScreen(80, 24)
+			emulator.state = DefaultTerminalState(80, 24)
+			emulator.parser.Reset()
+			
+			err := emulator.ProcessOutput(tt.output)
+			if err != nil {
+				t.Errorf("ProcessOutput() failed: %v", err)
+				return
+			}
+			
+			tt.verify(t, emulator)
+		})
 	}
 }
 

@@ -614,6 +614,16 @@ func (cv *ConfigValidator) ValidateAdvanced(config SerialConfig) error {
 	return nil
 }
 
+// NewSerialPort creates a new serial port instance (convenience function)
+func NewSerialPort() SerialPort {
+	return NewCrossPlatformSerialPort()
+}
+
+// ListPorts returns a list of available serial ports on the system (global function)
+func ListPorts() ([]string, error) {
+	return serial.GetPortsList()
+}
+
 // HealthChecker provides health checking capabilities for serial connections
 type HealthChecker struct {
 	port         SerialPort

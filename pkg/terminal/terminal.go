@@ -98,8 +98,8 @@ type TextAttributes struct {
 // DefaultTextAttributes returns default text attributes
 func DefaultTextAttributes() TextAttributes {
 	return TextAttributes{
-		Foreground: ColorWhite,
-		Background: ColorBlack,
+		Foreground: ColorDefault,  // Use terminal default foreground
+		Background: ColorDefault,  // Use terminal default background
 		Bold:       false,
 		Italic:     false,
 		Underline:  false,
@@ -112,33 +112,38 @@ func DefaultTextAttributes() TextAttributes {
 type Color int
 
 const (
-	ColorBlack Color = iota
-	ColorRed
-	ColorGreen
-	ColorYellow
-	ColorBlue
-	ColorMagenta
-	ColorCyan
-	ColorWhite
-	ColorBrightBlack
-	ColorBrightRed
-	ColorBrightGreen
-	ColorBrightYellow
-	ColorBrightBlue
-	ColorBrightMagenta
-	ColorBrightCyan
-	ColorBrightWhite
+	ColorDefault Color = -1  // Terminal default color
+	ColorBlack Color = 0
+	ColorRed Color = 1
+	ColorGreen Color = 2
+	ColorYellow Color = 3
+	ColorBlue Color = 4
+	ColorMagenta Color = 5
+	ColorCyan Color = 6
+	ColorWhite Color = 7
+	ColorBrightBlack Color = 8
+	ColorBrightRed Color = 9
+	ColorBrightGreen Color = 10
+	ColorBrightYellow Color = 11
+	ColorBrightBlue Color = 12
+	ColorBrightMagenta Color = 13
+	ColorBrightCyan Color = 14
+	ColorBrightWhite Color = 15
 )
 
 // String returns the string representation of Color
 func (c Color) String() string {
+	if c == ColorDefault {
+		return "default"
+	}
+	
 	colors := []string{
 		"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
 		"bright_black", "bright_red", "bright_green", "bright_yellow",
 		"bright_blue", "bright_magenta", "bright_cyan", "bright_white",
 	}
 	
-	if int(c) < len(colors) {
+	if int(c) >= 0 && int(c) < len(colors) {
 		return colors[c]
 	}
 	return "unknown"
@@ -1321,6 +1326,11 @@ func (te *TerminalEmulator) GetState() TerminalState {
 	return te.state
 }
 
+// GetScreen returns the terminal screen buffer
+func (te *TerminalEmulator) GetScreen() *Screen {
+	return te.screen
+}
+
 // SetState sets the terminal state
 func (te *TerminalEmulator) SetState(state TerminalState) error {
 	if err := state.Validate(); err != nil {
@@ -2104,6 +2114,11 @@ func (ip *InputProcessor) processKeyEvent(event *tcell.EventKey) error {
 	return nil
 }
 
+// ProcessKeyEvent processes keyboard events and returns the data to send
+func (ip *InputProcessor) ProcessKeyEvent(event *tcell.EventKey) []byte {
+	return ip.keyHandler.ProcessTcellEvent(event)
+}
+
 // processMouseEvent processes mouse events
 func (ip *InputProcessor) processMouseEvent(event *tcell.EventMouse) error {
 	sequence := ip.mouseHandler.ProcessTcellEvent(event)
@@ -2111,6 +2126,11 @@ func (ip *InputProcessor) processMouseEvent(event *tcell.EventMouse) error {
 		return ip.terminal.ProcessInput(sequence)
 	}
 	return nil
+}
+
+// ProcessMouseEvent processes mouse events and returns the data to send
+func (ip *InputProcessor) ProcessMouseEvent(event *tcell.EventMouse) []byte {
+	return ip.mouseHandler.ProcessTcellEvent(event)
 }
 
 // processResizeEvent processes terminal resize events

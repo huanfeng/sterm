@@ -62,6 +62,17 @@ type FileConfigManager struct {
 
 // NewFileConfigManager creates a new file-based configuration manager
 func NewFileConfigManager(configDir string) *FileConfigManager {
+	if configDir == "" {
+		// Use default config directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			// Fallback to current directory
+			configDir = ".serial-terminal"
+		} else {
+			configDir = filepath.Join(homeDir, ".serial-terminal")
+		}
+	}
+	
 	return &FileConfigManager{
 		configDir:  configDir,
 		configFile: "configs.json",
@@ -248,6 +259,32 @@ func (fcm *FileConfigManager) ConfigExists(name string) bool {
 	
 	_, exists := storage.Configs[name]
 	return exists
+}
+
+// UpdateLastUsed updates the last used timestamp for a configuration
+func (fcm *FileConfigManager) UpdateLastUsed(name string) error {
+	if name == "" {
+		return fmt.Errorf("configuration name cannot be empty")
+	}
+	
+	storage, err := fcm.loadStorage()
+	if err != nil {
+		return fmt.Errorf("failed to load configurations: %w", err)
+	}
+	
+	configInfo, exists := storage.Configs[name]
+	if !exists {
+		return fmt.Errorf("configuration '%s' not found", name)
+	}
+	
+	configInfo.LastUsedAt = time.Now()
+	storage.Configs[name] = configInfo
+	
+	if err := fcm.saveStorage(storage); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+	
+	return nil
 }
 
 // SetConfigDescription sets the description for a configuration
