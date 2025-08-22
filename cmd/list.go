@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
-	
+
 	"github.com/spf13/cobra"
 	"serial-terminal/pkg/serial"
 )
@@ -40,12 +40,12 @@ func runList(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error listing ports: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if len(portInfos) == 0 {
 		fmt.Println("No serial ports found.")
 		return
 	}
-	
+
 	// Display based on format
 	switch listFormat {
 	case "csv":
@@ -59,12 +59,12 @@ func runList(cmd *cobra.Command, args []string) {
 
 func printPortsTable(portInfos []serial.PortInfo) {
 	fmt.Printf("Found %d serial port(s):\n", len(portInfos))
-	
+
 	if listDetails {
 		// Show detailed information if available
 		for _, portInfo := range portInfos {
 			fmt.Printf("  %s", portInfo.Name)
-			
+
 			// Add USB details if available
 			if portInfo.IsUSB {
 				fmt.Printf(" [USB]")
@@ -86,7 +86,7 @@ func printPortsTable(portInfos []serial.PortInfo) {
 			fmt.Printf("  %s\n", portInfo.Name)
 		}
 	}
-	
+
 	fmt.Println("\nUse 'serial-terminal connect <port>' or 'serial-terminal c <port>' to connect.")
 }
 
@@ -94,7 +94,7 @@ func printPortsCSV(portInfos []serial.PortInfo) {
 	if listDetails {
 		fmt.Println("port,is_usb,vid,pid,product,serial_number")
 		for _, portInfo := range portInfos {
-			fmt.Printf("%s,%t,%s,%s,%s,%s\n", 
+			fmt.Printf("%s,%t,%s,%s,%s,%s\n",
 				portInfo.Name,
 				portInfo.IsUSB,
 				portInfo.VID,
@@ -117,7 +117,7 @@ func printPortsJSON(portInfos []serial.PortInfo) {
 		for i, portInfo := range portInfos {
 			fmt.Printf("  {\n")
 			fmt.Printf("    \"name\": \"%s\"", portInfo.Name)
-			
+
 			if portInfo.IsUSB {
 				fmt.Printf(",\n    \"is_usb\": true")
 				if portInfo.VID != "" {
@@ -133,7 +133,7 @@ func printPortsJSON(portInfos []serial.PortInfo) {
 					fmt.Printf(",\n    \"serial_number\": \"%s\"", portInfo.SerialNumber)
 				}
 			}
-			
+
 			fmt.Printf("\n  }")
 			if i < len(portInfos)-1 {
 				fmt.Printf(",")
@@ -146,7 +146,7 @@ func printPortsJSON(portInfos []serial.PortInfo) {
 		fmt.Println("[")
 		for i, portInfo := range portInfos {
 			fmt.Printf("  \"%s\"", portInfo.Name)
-			
+
 			if i < len(portInfos)-1 {
 				fmt.Printf(",\n")
 			} else {
@@ -156,4 +156,3 @@ func printPortsJSON(portInfos []serial.PortInfo) {
 		fmt.Println("]")
 	}
 }
-

@@ -138,7 +138,7 @@ func TestSession_Validate(t *testing.T) {
 
 func TestSession_Duration(t *testing.T) {
 	startTime := time.Now()
-	
+
 	tests := []struct {
 		name     string
 		session  Session
@@ -174,7 +174,7 @@ func TestSession_Duration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			duration := tt.session.Duration()
-			
+
 			if tt.name == "active session" {
 				// For active sessions, check if duration is reasonable (within 1 second)
 				if duration < 0 || duration > time.Second {
@@ -204,41 +204,41 @@ func TestNewSession(t *testing.T) {
 		CreatedAt:  time.Now(),
 		LastUsedAt: time.Now(),
 	}
-	
+
 	session := NewSession(name, configInfo)
-	
+
 	if session == nil {
 		t.Error("NewSession() returned nil")
 	}
-	
+
 	if session.Name != name {
 		t.Errorf("NewSession() Name = %s, want %s", session.Name, name)
 	}
-	
+
 	if session.Config.Name != configInfo.Name {
 		t.Errorf("NewSession() Config.Name = %s, want %s", session.Config.Name, configInfo.Name)
 	}
-	
+
 	if !session.IsActive {
 		t.Error("NewSession() should create active session")
 	}
-	
+
 	if session.DataSize != 0 {
 		t.Errorf("NewSession() DataSize = %d, want 0", session.DataSize)
 	}
-	
+
 	if session.ID == "" {
 		t.Error("NewSession() should generate non-empty ID")
 	}
-	
+
 	if session.StartTime.IsZero() {
 		t.Error("NewSession() should set start time")
 	}
-	
+
 	if session.Tags == nil {
 		t.Error("NewSession() should initialize Tags slice")
 	}
-	
+
 	if err := session.Validate(); err != nil {
 		t.Errorf("NewSession() should create valid session: %v", err)
 	}
@@ -308,29 +308,29 @@ func TestNewAppError(t *testing.T) {
 	code := "SERIAL_001"
 	message := "serial port error"
 	cause := &AppError{Type: ErrorFile, Message: "underlying error"}
-	
+
 	appError := NewAppError(errorType, code, message, cause)
-	
+
 	if appError == nil {
 		t.Error("NewAppError() returned nil")
 	}
-	
+
 	if appError.Type != errorType {
 		t.Errorf("NewAppError() Type = %v, want %v", appError.Type, errorType)
 	}
-	
+
 	if appError.Code != code {
 		t.Errorf("NewAppError() Code = %s, want %s", appError.Code, code)
 	}
-	
+
 	if appError.Message != message {
 		t.Errorf("NewAppError() Message = %s, want %s", appError.Message, message)
 	}
-	
+
 	if appError.Cause != cause {
 		t.Errorf("NewAppError() Cause = %v, want %v", appError.Cause, cause)
 	}
-	
+
 	if appError.Timestamp.IsZero() {
 		t.Error("NewAppError() should set timestamp")
 	}
@@ -416,31 +416,31 @@ func TestApplicationConfig_Validate(t *testing.T) {
 
 func TestDefaultApplicationConfig(t *testing.T) {
 	config := DefaultApplicationConfig()
-	
+
 	if err := config.Validate(); err != nil {
 		t.Errorf("DefaultApplicationConfig() should return valid config: %v", err)
 	}
-	
+
 	if config.HistoryMaxSize != 10*1024*1024 {
 		t.Errorf("DefaultApplicationConfig() HistoryMaxSize = %d, want %d", config.HistoryMaxSize, 10*1024*1024)
 	}
-	
+
 	if config.TerminalWidth != 80 {
 		t.Errorf("DefaultApplicationConfig() TerminalWidth = %d, want 80", config.TerminalWidth)
 	}
-	
+
 	if config.TerminalHeight != 24 {
 		t.Errorf("DefaultApplicationConfig() TerminalHeight = %d, want 24", config.TerminalHeight)
 	}
-	
+
 	if !config.AutoSaveHistory {
 		t.Error("DefaultApplicationConfig() AutoSaveHistory should be true")
 	}
-	
+
 	if config.LogLevel != "info" {
 		t.Errorf("DefaultApplicationConfig() LogLevel = %s, want info", config.LogLevel)
 	}
-	
+
 	if config.ConfigDir != ".serial-terminal" {
 		t.Errorf("DefaultApplicationConfig() ConfigDir = %s, want .serial-terminal", config.ConfigDir)
 	}
@@ -449,19 +449,19 @@ func TestDefaultApplicationConfig(t *testing.T) {
 func TestNewApplication(t *testing.T) {
 	version := "1.0.0"
 	app := NewApplication(version)
-	
+
 	if app == nil {
 		t.Error("NewApplication() returned nil")
 	}
-	
+
 	if app.version != version {
 		t.Errorf("NewApplication() version = %s, want %s", app.version, version)
 	}
-	
+
 	if app.isRunning {
 		t.Error("NewApplication() should create non-running application")
 	}
-	
+
 	if app.currentSession != nil {
 		t.Error("NewApplication() should not have current session")
 	}

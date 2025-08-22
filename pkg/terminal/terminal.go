@@ -6,7 +6,7 @@ import (
 	"serial-terminal/pkg/history"
 	"serial-terminal/pkg/serial"
 	"sync"
-	
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -41,31 +41,31 @@ func (t TerminalState) Validate() error {
 	if t.Width <= 0 {
 		return fmt.Errorf("width must be positive, got: %d", t.Width)
 	}
-	
+
 	if t.Height <= 0 {
 		return fmt.Errorf("height must be positive, got: %d", t.Height)
 	}
-	
+
 	if t.CursorX < 0 || t.CursorX >= t.Width {
 		return fmt.Errorf("cursor X out of bounds: %d (width: %d)", t.CursorX, t.Width)
 	}
-	
+
 	if t.CursorY < 0 || t.CursorY >= t.Height {
 		return fmt.Errorf("cursor Y out of bounds: %d (height: %d)", t.CursorY, t.Height)
 	}
-	
+
 	if t.ScrollTop < 0 || t.ScrollTop >= t.Height {
 		return fmt.Errorf("scroll top out of bounds: %d (height: %d)", t.ScrollTop, t.Height)
 	}
-	
+
 	if t.ScrollBottom < 0 || t.ScrollBottom >= t.Height {
 		return fmt.Errorf("scroll bottom out of bounds: %d (height: %d)", t.ScrollBottom, t.Height)
 	}
-	
+
 	if t.ScrollTop > t.ScrollBottom {
 		return fmt.Errorf("scroll top (%d) cannot be greater than scroll bottom (%d)", t.ScrollTop, t.ScrollBottom)
 	}
-	
+
 	return nil
 }
 
@@ -98,8 +98,8 @@ type TextAttributes struct {
 // DefaultTextAttributes returns default text attributes
 func DefaultTextAttributes() TextAttributes {
 	return TextAttributes{
-		Foreground: ColorDefault,  // Use terminal default foreground
-		Background: ColorDefault,  // Use terminal default background
+		Foreground: ColorDefault, // Use terminal default foreground
+		Background: ColorDefault, // Use terminal default background
 		Bold:       false,
 		Italic:     false,
 		Underline:  false,
@@ -112,23 +112,23 @@ func DefaultTextAttributes() TextAttributes {
 type Color int
 
 const (
-	ColorDefault Color = -1  // Terminal default color
-	ColorBlack Color = 0
-	ColorRed Color = 1
-	ColorGreen Color = 2
-	ColorYellow Color = 3
-	ColorBlue Color = 4
-	ColorMagenta Color = 5
-	ColorCyan Color = 6
-	ColorWhite Color = 7
-	ColorBrightBlack Color = 8
-	ColorBrightRed Color = 9
-	ColorBrightGreen Color = 10
-	ColorBrightYellow Color = 11
-	ColorBrightBlue Color = 12
+	ColorDefault       Color = -1 // Terminal default color
+	ColorBlack         Color = 0
+	ColorRed           Color = 1
+	ColorGreen         Color = 2
+	ColorYellow        Color = 3
+	ColorBlue          Color = 4
+	ColorMagenta       Color = 5
+	ColorCyan          Color = 6
+	ColorWhite         Color = 7
+	ColorBrightBlack   Color = 8
+	ColorBrightRed     Color = 9
+	ColorBrightGreen   Color = 10
+	ColorBrightYellow  Color = 11
+	ColorBrightBlue    Color = 12
 	ColorBrightMagenta Color = 13
-	ColorBrightCyan Color = 14
-	ColorBrightWhite Color = 15
+	ColorBrightCyan    Color = 14
+	ColorBrightWhite   Color = 15
 )
 
 // String returns the string representation of Color
@@ -136,13 +136,13 @@ func (c Color) String() string {
 	if c == ColorDefault {
 		return "default"
 	}
-	
+
 	colors := []string{
 		"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
 		"bright_black", "bright_red", "bright_green", "bright_yellow",
 		"bright_blue", "bright_magenta", "bright_cyan", "bright_white",
 	}
-	
+
 	if int(c) >= 0 && int(c) < len(colors) {
 		return colors[c]
 	}
@@ -166,7 +166,7 @@ func (m MouseMode) String() string {
 	modes := []string{
 		"off", "x10", "vt200", "vt200_highlight", "btn_event", "any_event",
 	}
-	
+
 	if int(m) < len(modes) {
 		return modes[m]
 	}
@@ -197,10 +197,10 @@ func NewTerminalEmulator(serialPort serial.SerialPort, historyManager history.Hi
 
 // Screen represents the terminal screen buffer
 type Screen struct {
-	Width   int
-	Height  int
-	Buffer  [][]Cell
-	Dirty   bool
+	Width  int
+	Height int
+	Buffer [][]Cell
+	Dirty  bool
 }
 
 // Cell represents a single character cell in the terminal
@@ -221,7 +221,7 @@ func NewScreen(width, height int) *Screen {
 			}
 		}
 	}
-	
+
 	return &Screen{
 		Width:  width,
 		Height: height,
@@ -232,9 +232,9 @@ func NewScreen(width, height int) *Screen {
 
 // VTParser handles VT100/ANSI escape sequence parsing
 type VTParser struct {
-	State       ParserState
-	Buffer      []byte
-	Params      []int
+	State        ParserState
+	Buffer       []byte
+	Params       []int
 	Intermediate []byte
 }
 
@@ -270,7 +270,7 @@ func (vt *VTParser) Reset() {
 // ParseByte processes a single byte through the VT parser state machine
 func (vt *VTParser) ParseByte(b byte, screen *Screen, state *TerminalState) []Action {
 	var actions []Action
-	
+
 	switch vt.State {
 	case StateGround:
 		actions = vt.handleGround(b, screen, state)
@@ -283,7 +283,7 @@ func (vt *VTParser) ParseByte(b byte, screen *Screen, state *TerminalState) []Ac
 	case StateDCS:
 		actions = vt.handleDCS(b, screen, state)
 	}
-	
+
 	return actions
 }
 
@@ -395,18 +395,18 @@ func (vt *VTParser) handleCSI(b byte, screen *Screen, state *TerminalState) []Ac
 		vt.Buffer = append(vt.Buffer, b)
 		return nil
 	}
-	
+
 	if b >= 0x20 && b <= 0x2F { // Intermediate bytes
 		vt.Intermediate = append(vt.Intermediate, b)
 		return nil
 	}
-	
+
 	if b >= 0x40 && b <= 0x7E { // Final byte
 		actions := vt.executeCSI(b, screen, state)
 		vt.Reset()
 		return actions
 	}
-	
+
 	// Invalid sequence, reset
 	vt.Reset()
 	return nil
@@ -416,7 +416,7 @@ func (vt *VTParser) handleCSI(b byte, screen *Screen, state *TerminalState) []Ac
 func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState) []Action {
 	// Parse parameters
 	vt.parseParams()
-	
+
 	switch final {
 	case 'A': // CUU - Cursor Up
 		count := vt.getParam(0, 1)
@@ -470,15 +470,15 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 // parseParams parses parameter string into integer array
 func (vt *VTParser) parseParams() {
 	vt.Params = vt.Params[:0]
-	
+
 	if len(vt.Buffer) == 0 {
 		return
 	}
-	
+
 	paramStr := string(vt.Buffer)
 	current := 0
 	hasDigit := false
-	
+
 	for _, ch := range paramStr {
 		if ch >= '0' && ch <= '9' {
 			current = current*10 + int(ch-'0')
@@ -493,7 +493,7 @@ func (vt *VTParser) parseParams() {
 			hasDigit = false
 		}
 	}
-	
+
 	if hasDigit {
 		vt.Params = append(vt.Params, current)
 	} else if len(paramStr) > 0 && paramStr[len(paramStr)-1] == ';' {
@@ -515,7 +515,7 @@ func (vt *VTParser) handleSGR() []Action {
 		// Reset all attributes
 		return []Action{{Type: ActionSetAttribute, Data: AttributeChange{Reset: true}}}
 	}
-	
+
 	var actions []Action
 	for _, param := range vt.Params {
 		action := vt.sgrParamToAction(param)
@@ -523,7 +523,7 @@ func (vt *VTParser) handleSGR() []Action {
 			actions = append(actions, *action)
 		}
 	}
-	
+
 	return actions
 }
 
@@ -576,7 +576,7 @@ func (vt *VTParser) sgrParamToAction(param int) *Action {
 // handleSetMode handles mode setting sequences
 func (vt *VTParser) handleSetMode(set bool) []Action {
 	var actions []Action
-	
+
 	for _, param := range vt.Params {
 		var mode string
 		switch param {
@@ -625,10 +625,10 @@ func (vt *VTParser) handleSetMode(set bool) []Action {
 		default:
 			continue
 		}
-		
+
 		actions = append(actions, Action{Type: ActionSetMode, Data: mode})
 	}
-	
+
 	return actions
 }
 
@@ -639,7 +639,7 @@ func (vt *VTParser) handleOSC(b byte, screen *Screen, state *TerminalState) []Ac
 		vt.Reset()
 		return nil
 	}
-	
+
 	vt.Buffer = append(vt.Buffer, b)
 	return nil
 }
@@ -651,7 +651,7 @@ func (vt *VTParser) handleDCS(b byte, screen *Screen, state *TerminalState) []Ac
 		vt.Reset()
 		return nil
 	}
-	
+
 	vt.Buffer = append(vt.Buffer, b)
 	return nil
 }
@@ -699,7 +699,7 @@ func NewTerminalRenderer(terminal *TerminalEmulator) (*TerminalRenderer, error) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create screen: %w", err)
 	}
-	
+
 	return &TerminalRenderer{
 		screen:   screen,
 		terminal: terminal,
@@ -711,23 +711,23 @@ func NewTerminalRenderer(terminal *TerminalEmulator) (*TerminalRenderer, error) 
 func (tr *TerminalRenderer) Start() error {
 	tr.mutex.Lock()
 	defer tr.mutex.Unlock()
-	
+
 	if tr.running {
 		return fmt.Errorf("renderer is already running")
 	}
-	
+
 	if err := tr.screen.Init(); err != nil {
 		return fmt.Errorf("failed to initialize screen: %w", err)
 	}
-	
+
 	tr.screen.SetStyle(tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 	tr.screen.Clear()
-	
+
 	tr.running = true
-	
+
 	// Start event handling goroutine
 	go tr.handleEvents()
-	
+
 	return nil
 }
 
@@ -735,15 +735,15 @@ func (tr *TerminalRenderer) Start() error {
 func (tr *TerminalRenderer) Stop() error {
 	tr.mutex.Lock()
 	defer tr.mutex.Unlock()
-	
+
 	if !tr.running {
 		return nil
 	}
-	
+
 	tr.running = false
 	tr.screen.Fini()
 	close(tr.events)
-	
+
 	return nil
 }
 
@@ -751,20 +751,20 @@ func (tr *TerminalRenderer) Stop() error {
 func (tr *TerminalRenderer) Render() error {
 	tr.mutex.RLock()
 	defer tr.mutex.RUnlock()
-	
+
 	if !tr.running {
 		return fmt.Errorf("renderer is not running")
 	}
-	
+
 	// Get terminal state and screen
 	state := tr.terminal.GetState()
 	screen := tr.terminal.screen
-	
+
 	// Clear screen if needed
 	if screen.Dirty {
 		tr.screen.Clear()
 	}
-	
+
 	// Render each cell
 	for y := 0; y < screen.Height; y++ {
 		for x := 0; x < screen.Width; x++ {
@@ -773,26 +773,26 @@ func (tr *TerminalRenderer) Render() error {
 			tr.screen.SetContent(x, y, cell.Char, nil, style)
 		}
 	}
-	
+
 	// Set cursor position
 	tr.screen.ShowCursor(state.CursorX, state.CursorY)
-	
+
 	// Update screen
 	tr.screen.Show()
 	screen.Dirty = false
-	
+
 	return nil
 }
 
 // attributesToStyle converts TextAttributes to tcell.Style
 func (tr *TerminalRenderer) attributesToStyle(attrs TextAttributes) tcell.Style {
 	style := tcell.StyleDefault
-	
+
 	// Set colors
 	fg := tr.colorToTcell(attrs.Foreground)
 	bg := tr.colorToTcell(attrs.Background)
 	style = style.Foreground(fg).Background(bg)
-	
+
 	// Set attributes
 	if attrs.Bold {
 		style = style.Bold(true)
@@ -809,7 +809,7 @@ func (tr *TerminalRenderer) attributesToStyle(attrs TextAttributes) tcell.Style 
 	if attrs.Blink {
 		style = style.Blink(true)
 	}
-	
+
 	return style
 }
 
@@ -860,7 +860,7 @@ func (tr *TerminalRenderer) handleEvents() {
 		if event == nil {
 			continue
 		}
-		
+
 		select {
 		case tr.events <- event:
 		default:
@@ -883,15 +883,15 @@ func (tr *TerminalRenderer) GetEvent() tcell.Event {
 func (tr *TerminalRenderer) Resize(width, height int) error {
 	tr.mutex.Lock()
 	defer tr.mutex.Unlock()
-	
+
 	// Resize terminal state
 	if err := tr.terminal.Resize(width, height); err != nil {
 		return err
 	}
-	
+
 	// Resize screen buffer
 	tr.terminal.screen = NewScreen(width, height)
-	
+
 	return nil
 }
 
@@ -907,10 +907,10 @@ func (te *TerminalEmulator) Start() error {
 	if te.isRunning {
 		return fmt.Errorf("terminal is already running")
 	}
-	
+
 	te.isRunning = true
 	te.state.IsRunning = true
-	
+
 	return nil
 }
 
@@ -919,10 +919,10 @@ func (te *TerminalEmulator) Stop() error {
 	if !te.isRunning {
 		return nil
 	}
-	
+
 	te.isRunning = false
 	te.state.IsRunning = false
-	
+
 	return nil
 }
 
@@ -931,20 +931,20 @@ func (te *TerminalEmulator) ProcessInput(input []byte) error {
 	if !te.isRunning {
 		return fmt.Errorf("terminal is not running")
 	}
-	
+
 	// Send input to serial port
 	if te.serialPort != nil && te.serialPort.IsOpen() {
 		_, err := te.serialPort.Write(input)
 		if err != nil {
 			return fmt.Errorf("failed to write to serial port: %w", err)
 		}
-		
+
 		// Log input to history
 		if te.historyManager != nil {
 			te.historyManager.Write(input, history.DirectionOutput)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -953,22 +953,22 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 	if !te.isRunning {
 		return fmt.Errorf("terminal is not running")
 	}
-	
+
 	// Log output to history
 	if te.historyManager != nil {
 		te.historyManager.Write(output, history.DirectionInput)
 	}
-	
+
 	// Process each byte through the VT parser
 	for _, b := range output {
 		actions := te.parser.ParseByte(b, te.screen, &te.state)
-		
+
 		// Execute actions
 		for _, action := range actions {
 			te.executeAction(action)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1014,18 +1014,18 @@ func (te *TerminalEmulator) printChar(ch rune) {
 		te.newline()
 		te.carriageReturn()
 	}
-	
+
 	if te.state.CursorY >= te.state.Height {
 		te.scroll("up")
 		te.state.CursorY = te.state.Height - 1
 	}
-	
+
 	// Set character in screen buffer
 	te.screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
 		Char:       ch,
 		Attributes: te.state.Attributes,
 	}
-	
+
 	te.state.CursorX++
 	te.screen.Dirty = true
 }
@@ -1063,7 +1063,7 @@ func (te *TerminalEmulator) clearScreen(mode int) {
 // clearLine clears the current line
 func (te *TerminalEmulator) clearLine(mode int) {
 	y := te.state.CursorY
-	
+
 	switch mode {
 	case 0: // Clear from cursor to end of line
 		for x := te.state.CursorX; x < te.state.Width; x++ {
@@ -1087,7 +1087,7 @@ func (te *TerminalEmulator) setAttribute(change AttributeChange) {
 		te.state.Attributes = DefaultTextAttributes()
 		return
 	}
-	
+
 	if change.Bold != nil {
 		te.state.Attributes.Bold = *change.Bold
 	}
@@ -1128,7 +1128,7 @@ func (te *TerminalEmulator) scrollUp() {
 	for y := te.state.ScrollTop; y < te.state.ScrollBottom; y++ {
 		copy(te.screen.Buffer[y], te.screen.Buffer[y+1])
 	}
-	
+
 	// Clear bottom line
 	for x := 0; x < te.state.Width; x++ {
 		te.screen.Buffer[te.state.ScrollBottom][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
@@ -1141,7 +1141,7 @@ func (te *TerminalEmulator) scrollDown() {
 	for y := te.state.ScrollBottom; y > te.state.ScrollTop; y-- {
 		copy(te.screen.Buffer[y], te.screen.Buffer[y-1])
 	}
-	
+
 	// Clear top line
 	for x := 0; x < te.state.Width; x++ {
 		te.screen.Buffer[te.state.ScrollTop][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
@@ -1199,17 +1199,17 @@ func (te *TerminalEmulator) backspace() {
 func (te *TerminalEmulator) deleteChar(count int) {
 	y := te.state.CursorY
 	x := te.state.CursorX
-	
+
 	// Shift characters left
 	for i := x; i < te.state.Width-count; i++ {
 		te.screen.Buffer[y][i] = te.screen.Buffer[y][i+count]
 	}
-	
+
 	// Clear rightmost characters
 	for i := te.state.Width - count; i < te.state.Width; i++ {
 		te.screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
-	
+
 	te.screen.Dirty = true
 }
 
@@ -1217,17 +1217,17 @@ func (te *TerminalEmulator) deleteChar(count int) {
 func (te *TerminalEmulator) insertChar(count int) {
 	y := te.state.CursorY
 	x := te.state.CursorX
-	
+
 	// Shift characters right
 	for i := te.state.Width - 1; i >= x+count; i-- {
 		te.screen.Buffer[y][i] = te.screen.Buffer[y][i-count]
 	}
-	
+
 	// Clear inserted characters
 	for i := x; i < x+count && i < te.state.Width; i++ {
 		te.screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
-	
+
 	te.screen.Dirty = true
 }
 
@@ -1243,7 +1243,7 @@ func (te *TerminalEmulator) clearFromCursor() {
 	for x := te.state.CursorX; x < te.state.Width; x++ {
 		te.screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
-	
+
 	// Clear all lines below current line
 	for y := te.state.CursorY + 1; y < te.state.Height; y++ {
 		for x := 0; x < te.state.Width; x++ {
@@ -1260,7 +1260,7 @@ func (te *TerminalEmulator) clearToCursor() {
 			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
-	
+
 	// Clear from beginning of current line to cursor
 	for x := 0; x <= te.state.CursorX; x++ {
 		te.screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
@@ -1281,33 +1281,33 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("invalid dimensions: %dx%d", width, height)
 	}
-	
+
 	// Create new screen buffer
 	newScreen := NewScreen(width, height)
-	
+
 	// Copy existing content
 	copyHeight := min(height, te.screen.Height)
 	copyWidth := min(width, te.screen.Width)
-	
+
 	for y := 0; y < copyHeight; y++ {
 		for x := 0; x < copyWidth; x++ {
 			newScreen.Buffer[y][x] = te.screen.Buffer[y][x]
 		}
 	}
-	
+
 	// Update terminal state
 	te.screen = newScreen
 	te.state.Width = width
 	te.state.Height = height
-	
+
 	// Adjust cursor position if necessary
 	te.state.CursorX = min(te.state.CursorX, width-1)
 	te.state.CursorY = min(te.state.CursorY, height-1)
-	
+
 	// Adjust scroll region
 	te.state.ScrollBottom = min(te.state.ScrollBottom, height-1)
 	te.state.ScrollTop = min(te.state.ScrollTop, te.state.ScrollBottom)
-	
+
 	return nil
 }
 
@@ -1336,7 +1336,7 @@ func (te *TerminalEmulator) SetState(state TerminalState) error {
 	if err := state.Validate(); err != nil {
 		return err
 	}
-	
+
 	te.state = state
 	return nil
 }
@@ -1431,11 +1431,11 @@ func (ma MouseAction) String() string {
 
 // MouseHandler handles mouse events and converts them to terminal sequences
 type MouseHandler struct {
-	mode         MouseMode
-	lastX        int
-	lastY        int
-	buttonState  map[MouseButton]bool
-	dragButton   MouseButton
+	mode        MouseMode
+	lastX       int
+	lastY       int
+	buttonState map[MouseButton]bool
+	dragButton  MouseButton
 }
 
 // NewMouseHandler creates a new mouse handler
@@ -1462,10 +1462,10 @@ func (mh *MouseHandler) ProcessTcellEvent(event *tcell.EventMouse) []byte {
 	if mh.mode == MouseModeOff {
 		return nil
 	}
-	
+
 	x, y := event.Position()
 	buttons := event.Buttons()
-	
+
 	mouseEvent := mh.tcellToMouseEvent(x, y, buttons)
 	return mh.mouseEventToSequence(mouseEvent)
 }
@@ -1474,7 +1474,7 @@ func (mh *MouseHandler) ProcessTcellEvent(event *tcell.EventMouse) []byte {
 func (mh *MouseHandler) tcellToMouseEvent(x, y int, buttons tcell.ButtonMask) MouseEvent {
 	var button MouseButton
 	var action MouseAction
-	
+
 	// Determine button
 	switch {
 	case buttons&tcell.Button1 != 0:
@@ -1490,7 +1490,7 @@ func (mh *MouseHandler) tcellToMouseEvent(x, y int, buttons tcell.ButtonMask) Mo
 	default:
 		button = MouseButtonNone
 	}
-	
+
 	// Determine action
 	if button == MouseButtonNone {
 		// Mouse move without button
@@ -1505,7 +1505,7 @@ func (mh *MouseHandler) tcellToMouseEvent(x, y int, buttons tcell.ButtonMask) Mo
 		// Button event
 		wasPressed := mh.buttonState[button]
 		isPressed := buttons != 0
-		
+
 		if isPressed && !wasPressed {
 			action = MouseActionPress
 			if button != MouseButtonWheelUp && button != MouseButtonWheelDown {
@@ -1519,13 +1519,13 @@ func (mh *MouseHandler) tcellToMouseEvent(x, y int, buttons tcell.ButtonMask) Mo
 		} else {
 			action = MouseActionMove
 		}
-		
+
 		mh.buttonState[button] = isPressed
 	}
-	
+
 	mh.lastX = x
 	mh.lastY = y
-	
+
 	return MouseEvent{
 		X:      x,
 		Y:      y,
@@ -1556,12 +1556,12 @@ func (mh *MouseHandler) generateX10Sequence(event MouseEvent) []byte {
 	if event.Action != MouseActionPress {
 		return nil
 	}
-	
+
 	cb := mh.buttonToX10Code(event.Button)
 	if cb == -1 {
 		return nil
 	}
-	
+
 	// ESC[M + button + x + y (all offset by 32)
 	return []byte{
 		0x1B, '[', 'M',
@@ -1577,12 +1577,12 @@ func (mh *MouseHandler) generateVT200Sequence(event MouseEvent) []byte {
 	if event.Action != MouseActionPress && event.Action != MouseActionRelease {
 		return nil
 	}
-	
+
 	cb := mh.buttonToVT200Code(event.Button, event.Action)
 	if cb == -1 {
 		return nil
 	}
-	
+
 	// ESC[M + button + x + y (all offset by 32)
 	return []byte{
 		0x1B, '[', 'M',
@@ -1598,12 +1598,12 @@ func (mh *MouseHandler) generateBtnEventSequence(event MouseEvent) []byte {
 	if event.Action == MouseActionMove && event.Button == MouseButtonNone {
 		return nil // Don't report plain moves
 	}
-	
+
 	cb := mh.buttonToBtnEventCode(event.Button, event.Action)
 	if cb == -1 {
 		return nil
 	}
-	
+
 	return []byte{
 		0x1B, '[', 'M',
 		byte(cb + 32),
@@ -1619,7 +1619,7 @@ func (mh *MouseHandler) generateAnyEventSequence(event MouseEvent) []byte {
 	if cb == -1 {
 		return nil
 	}
-	
+
 	return []byte{
 		0x1B, '[', 'M',
 		byte(cb + 32),
@@ -1648,11 +1648,11 @@ func (mh *MouseHandler) buttonToVT200Code(button MouseButton, action MouseAction
 	if base == -1 {
 		return -1
 	}
-	
+
 	if action == MouseActionRelease {
 		return 3 // Release code
 	}
-	
+
 	return base
 }
 
@@ -1704,17 +1704,17 @@ func (mh *MouseHandler) buttonToAnyEventCode(button MouseButton, action MouseAct
 func (tr *TerminalRenderer) EnableMouseTracking(mode MouseMode) error {
 	tr.mutex.Lock()
 	defer tr.mutex.Unlock()
-	
+
 	if !tr.running {
 		return fmt.Errorf("renderer is not running")
 	}
-	
+
 	// Enable mouse events in tcell
 	tr.screen.EnableMouse()
-	
+
 	// Set mouse mode in terminal
 	tr.terminal.state.MouseMode = mode
-	
+
 	return nil
 }
 
@@ -1722,17 +1722,17 @@ func (tr *TerminalRenderer) EnableMouseTracking(mode MouseMode) error {
 func (tr *TerminalRenderer) DisableMouseTracking() error {
 	tr.mutex.Lock()
 	defer tr.mutex.Unlock()
-	
+
 	if !tr.running {
 		return fmt.Errorf("renderer is not running")
 	}
-	
+
 	// Disable mouse events in tcell
 	tr.screen.DisableMouse()
-	
+
 	// Set mouse mode to off
 	tr.terminal.state.MouseMode = MouseModeOff
-	
+
 	return nil
 }
 
@@ -1741,16 +1741,16 @@ func (tr *TerminalRenderer) ProcessMouseEvent(event *tcell.EventMouse) error {
 	if tr.terminal.state.MouseMode == MouseModeOff {
 		return nil
 	}
-	
+
 	mouseHandler := NewMouseHandler()
 	mouseHandler.SetMode(tr.terminal.state.MouseMode)
-	
+
 	sequence := mouseHandler.ProcessTcellEvent(event)
 	if len(sequence) > 0 {
 		// Send mouse sequence to serial port as if it was keyboard input
 		return tr.terminal.ProcessInput(sequence)
 	}
-	
+
 	return nil
 }
 
@@ -1769,7 +1769,7 @@ func (tr *TerminalRenderer) handleEventsWithMouse() {
 		if event == nil {
 			continue
 		}
-		
+
 		switch ev := event.(type) {
 		case *tcell.EventMouse:
 			tr.handleMouseEvent(ev)
@@ -1820,37 +1820,37 @@ func (kh *KeyHandler) ProcessTcellEvent(event *tcell.EventKey) []byte {
 	key := event.Key()
 	char := event.Rune()
 	mods := event.Modifiers()
-	
+
 	// Handle special keys first
 	if sequence := kh.handleSpecialKey(key, mods); sequence != nil {
 		return sequence
 	}
-	
+
 	// Handle function keys
 	if sequence := kh.handleFunctionKey(key, mods); sequence != nil {
 		return sequence
 	}
-	
+
 	// Handle cursor keys
 	if sequence := kh.handleCursorKey(key, mods); sequence != nil {
 		return sequence
 	}
-	
+
 	// Handle keypad keys
 	if sequence := kh.handleKeypadKey(key, mods); sequence != nil {
 		return sequence
 	}
-	
+
 	// Handle control characters
 	if sequence := kh.handleControlChar(key, char, mods); sequence != nil {
 		return sequence
 	}
-	
+
 	// Handle regular characters
 	if char != 0 {
 		return kh.handleRegularChar(char, mods)
 	}
-	
+
 	return nil
 }
 
@@ -1879,14 +1879,14 @@ func (kh *KeyHandler) handleSpecialKey(key tcell.Key, mods tcell.ModMask) []byte
 	case tcell.KeyEscape:
 		return []byte{0x1B} // ESC
 	}
-	
+
 	return nil
 }
 
 // handleFunctionKey handles function keys F1-F12
 func (kh *KeyHandler) handleFunctionKey(key tcell.Key, mods tcell.ModMask) []byte {
 	var base []byte
-	
+
 	switch key {
 	case tcell.KeyF1:
 		base = []byte{0x1B, 'O', 'P'}
@@ -1915,19 +1915,19 @@ func (kh *KeyHandler) handleFunctionKey(key tcell.Key, mods tcell.ModMask) []byt
 	default:
 		return nil
 	}
-	
+
 	// Add modifiers if present
 	if mods != 0 {
 		return kh.addModifiers(base, mods)
 	}
-	
+
 	return base
 }
 
 // handleCursorKey handles cursor movement keys
 func (kh *KeyHandler) handleCursorKey(key tcell.Key, mods tcell.ModMask) []byte {
 	var sequence []byte
-	
+
 	if kh.cursorKeyMode {
 		// Application mode
 		switch key {
@@ -1953,11 +1953,11 @@ func (kh *KeyHandler) handleCursorKey(key tcell.Key, mods tcell.ModMask) []byte 
 			sequence = []byte{0x1B, '[', 'D'}
 		}
 	}
-	
+
 	if sequence != nil && mods != 0 {
 		return kh.addModifiers(sequence, mods)
 	}
-	
+
 	return sequence
 }
 
@@ -1984,7 +1984,7 @@ func (kh *KeyHandler) handleKeypadKey(key tcell.Key, mods tcell.ModMask) []byte 
 			return []byte{0x1B, '[', '6', '~'}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -2016,13 +2016,13 @@ func (kh *KeyHandler) handleControlChar(key tcell.Key, char rune, mods tcell.Mod
 			return []byte{0x1F}
 		}
 	}
-	
+
 	// Handle Alt+key combinations
 	if mods&tcell.ModAlt != 0 && char != 0 {
 		// Alt+char sends ESC followed by char
 		return []byte{0x1B, byte(char)}
 	}
-	
+
 	return nil
 }
 
@@ -2033,12 +2033,12 @@ func (kh *KeyHandler) handleRegularChar(char rune, mods tcell.ModMask) []byte {
 		// Alt+char sends ESC followed by char
 		return []byte{0x1B, byte(char)}
 	}
-	
+
 	// Regular character
 	if char <= 0x7F {
 		return []byte{byte(char)}
 	}
-	
+
 	// UTF-8 character
 	return []byte(string(char))
 }
@@ -2056,22 +2056,22 @@ func (kh *KeyHandler) addModifiers(base []byte, mods tcell.ModMask) []byte {
 	if mods&tcell.ModCtrl != 0 {
 		modParam += 4
 	}
-	
+
 	if modParam == 1 {
 		return base // No modifiers
 	}
-	
+
 	// Insert modifier parameter into sequence
 	// For sequences like ESC[A, convert to ESC[1;2A for Shift+Up
 	if len(base) >= 3 && base[0] == 0x1B && base[1] == '[' {
 		result := make([]byte, 0, len(base)+4)
-		result = append(result, base[:2]...) // ESC[
-		result = append(result, '1', ';')    // 1;
+		result = append(result, base[:2]...)        // ESC[
+		result = append(result, '1', ';')           // 1;
 		result = append(result, byte('0'+modParam)) // modifier
 		result = append(result, base[2:]...)        // rest of sequence
 		return result
 	}
-	
+
 	return base
 }
 
@@ -2101,7 +2101,7 @@ func (ip *InputProcessor) ProcessEvent(event tcell.Event) error {
 	case *tcell.EventResize:
 		return ip.processResizeEvent(ev)
 	}
-	
+
 	return nil
 }
 
@@ -2261,18 +2261,18 @@ func (s *Shortcut) Matches(key tcell.Key, char rune, mods tcell.ModMask) bool {
 	if !s.Enabled {
 		return false
 	}
-	
+
 	// Check modifiers first
 	if s.Mods != mods {
 		return false
 	}
-	
+
 	// Check key or character
 	if s.Key != tcell.KeyRune {
 		// For non-rune keys, only compare the key
 		return s.Key == key
 	}
-	
+
 	// For rune keys, compare both key and character
 	return key == tcell.KeyRune && s.Char == char
 }
@@ -2282,11 +2282,11 @@ func (s *Shortcut) Execute() error {
 	if !s.Enabled {
 		return fmt.Errorf("shortcut %s is disabled", s.Name)
 	}
-	
+
 	if s.Handler != nil {
 		return s.Handler()
 	}
-	
+
 	return fmt.Errorf("no handler defined for shortcut %s", s.Name)
 }
 
@@ -2302,10 +2302,10 @@ func NewShortcutManager() *ShortcutManager {
 		shortcuts: make(map[string]*Shortcut),
 		enabled:   true,
 	}
-	
+
 	// Add default shortcuts
 	sm.addDefaultShortcuts()
-	
+
 	return sm
 }
 
@@ -2321,7 +2321,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Exit application",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "save",
 		Key:         tcell.KeyRune,
@@ -2331,7 +2331,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Save history to file",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "clear",
 		Key:         tcell.KeyRune,
@@ -2341,7 +2341,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Clear terminal screen",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "help",
 		Key:         tcell.KeyF1,
@@ -2351,7 +2351,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Show help",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "settings",
 		Key:         tcell.KeyRune,
@@ -2361,7 +2361,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Open settings",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "connect",
 		Key:         tcell.KeyRune,
@@ -2371,7 +2371,7 @@ func (sm *ShortcutManager) addDefaultShortcuts() {
 		Description: "Connect to serial port",
 		Enabled:     true,
 	})
-	
+
 	sm.AddShortcut(&Shortcut{
 		Name:        "disconnect",
 		Key:         tcell.KeyRune,
@@ -2436,14 +2436,14 @@ func (sm *ShortcutManager) ProcessKeyEvent(key tcell.Key, char rune, mods tcell.
 	if !sm.enabled {
 		return false, nil
 	}
-	
+
 	for _, shortcut := range sm.shortcuts {
 		if shortcut.Matches(key, char, mods) {
 			err := shortcut.Execute()
 			return true, err // Return true to indicate shortcut was handled
 		}
 	}
-	
+
 	return false, nil // No shortcut matched
 }
 
@@ -2453,7 +2453,7 @@ func (sm *ShortcutManager) SetShortcutHandler(name string, handler func() error)
 	if shortcut == nil {
 		return fmt.Errorf("shortcut %s not found", name)
 	}
-	
+
 	shortcut.Handler = handler
 	return nil
 }
@@ -2470,30 +2470,30 @@ func (sm *ShortcutManager) CustomShortcut(name, description string, key tcell.Ke
 		Description: description,
 		Enabled:     true,
 	}
-	
+
 	sm.AddShortcut(shortcut)
 }
 
 // GetShortcutHelp returns help text for all shortcuts
 func (sm *ShortcutManager) GetShortcutHelp() string {
 	help := "Available Shortcuts:\n\n"
-	
+
 	for _, shortcut := range sm.shortcuts {
 		if !shortcut.Enabled {
 			continue
 		}
-		
+
 		keyDesc := sm.formatKeyDescription(shortcut)
 		help += fmt.Sprintf("  %-20s %s\n", keyDesc, shortcut.Description)
 	}
-	
+
 	return help
 }
 
 // formatKeyDescription formats a key combination for display
 func (sm *ShortcutManager) formatKeyDescription(shortcut *Shortcut) string {
 	var parts []string
-	
+
 	if shortcut.Mods&tcell.ModCtrl != 0 {
 		parts = append(parts, "Ctrl")
 	}
@@ -2503,18 +2503,18 @@ func (sm *ShortcutManager) formatKeyDescription(shortcut *Shortcut) string {
 	if shortcut.Mods&tcell.ModShift != 0 {
 		parts = append(parts, "Shift")
 	}
-	
+
 	var keyName string
 	if shortcut.Key == tcell.KeyRune {
 		keyName = string(shortcut.Char)
 	} else {
 		keyName = sm.keyToString(shortcut.Key)
 	}
-	
+
 	if len(parts) > 0 {
 		return fmt.Sprintf("%s+%s", joinStrings(parts, "+"), keyName)
 	}
-	
+
 	return keyName
 }
 
@@ -2583,24 +2583,24 @@ func joinStrings(strs []string, sep string) string {
 	if len(strs) == 0 {
 		return ""
 	}
-	
+
 	result := strs[0]
 	for i := 1; i < len(strs); i++ {
 		result += sep + strs[i]
 	}
-	
+
 	return result
 }
 
 // ShortcutConfig represents shortcut configuration for persistence
 type ShortcutConfig struct {
-	Name        string        `json:"name"`
-	Key         string        `json:"key"`
-	Char        string        `json:"char"`
-	Mods        []string      `json:"mods"`
-	Action      string        `json:"action"`
-	Description string        `json:"description"`
-	Enabled     bool          `json:"enabled"`
+	Name        string   `json:"name"`
+	Key         string   `json:"key"`
+	Char        string   `json:"char"`
+	Mods        []string `json:"mods"`
+	Action      string   `json:"action"`
+	Description string   `json:"description"`
+	Enabled     bool     `json:"enabled"`
 }
 
 // ToConfig converts a Shortcut to ShortcutConfig for serialization
@@ -2614,7 +2614,7 @@ func (s *Shortcut) ToConfig() ShortcutConfig {
 		Description: s.Description,
 		Enabled:     s.Enabled,
 	}
-	
+
 	// Convert key
 	if s.Key == tcell.KeyRune {
 		config.Char = string(s.Char)
@@ -2622,7 +2622,7 @@ func (s *Shortcut) ToConfig() ShortcutConfig {
 		sm := NewShortcutManager()
 		config.Key = sm.keyToString(s.Key)
 	}
-	
+
 	// Convert modifiers
 	if s.Mods&tcell.ModCtrl != 0 {
 		config.Mods = append(config.Mods, "ctrl")
@@ -2633,7 +2633,7 @@ func (s *Shortcut) ToConfig() ShortcutConfig {
 	if s.Mods&tcell.ModShift != 0 {
 		config.Mods = append(config.Mods, "shift")
 	}
-	
+
 	return config
 }
 
@@ -2644,7 +2644,7 @@ func ShortcutFromConfig(config ShortcutConfig) (*Shortcut, error) {
 		Description: config.Description,
 		Enabled:     config.Enabled,
 	}
-	
+
 	// Parse action
 	switch config.Action {
 	case "exit":
@@ -2672,7 +2672,7 @@ func ShortcutFromConfig(config ShortcutConfig) (*Shortcut, error) {
 	default:
 		return nil, fmt.Errorf("unknown action: %s", config.Action)
 	}
-	
+
 	// Parse modifiers
 	var mods tcell.ModMask
 	for _, mod := range config.Mods {
@@ -2686,7 +2686,7 @@ func ShortcutFromConfig(config ShortcutConfig) (*Shortcut, error) {
 		}
 	}
 	shortcut.Mods = mods
-	
+
 	// Parse key or character
 	if config.Char != "" {
 		shortcut.Key = tcell.KeyRune
@@ -2700,7 +2700,7 @@ func ShortcutFromConfig(config ShortcutConfig) (*Shortcut, error) {
 		}
 		shortcut.Key = key
 	}
-	
+
 	return shortcut, nil
 }
 
@@ -2779,7 +2779,7 @@ func (ip *InputProcessor) processKeyEventWithShortcuts(event *tcell.EventKey, sm
 			return err // Shortcut was handled, don't process as regular input
 		}
 	}
-	
+
 	// Process as regular key input
 	return ip.processKeyEvent(event)
 }

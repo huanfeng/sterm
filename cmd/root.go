@@ -3,21 +3,21 @@ package cmd
 import (
 	"fmt"
 	"os"
-	
+
 	"github.com/spf13/cobra"
 )
 
 var (
 	// Root command flags
-	verbose     bool
-	
+	verbose bool
+
 	// Root command
 	rootCmd = &cobra.Command{
-		Use:                   "serial-terminal",
-		Short:                 "A cross-platform serial port terminal emulator",
-		Version:               "1.0.0",
-		Run:                   runTerminal,
-		DisableAutoGenTag:     true,
+		Use:               "serial-terminal",
+		Short:             "A cross-platform serial port terminal emulator",
+		Version:           "1.0.0",
+		Run:               runTerminal,
+		DisableAutoGenTag: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
@@ -34,10 +34,10 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	
+
 	// Persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-	
+
 	// Add subcommands
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(configCmd)

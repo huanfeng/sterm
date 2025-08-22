@@ -5,7 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 	"time"
-	
+
 	"github.com/spf13/cobra"
 	"serial-terminal/pkg/app"
 	"serial-terminal/pkg/config"
@@ -96,7 +96,7 @@ func init() {
 	configCmd.AddCommand(listConfigCmd)
 	configCmd.AddCommand(deleteCmd)
 	configCmd.AddCommand(showCmd)
-	
+
 	// Add flags for save command
 	saveCmd.Flags().StringVarP(&configPort, "port", "p", "", "serial port")
 	saveCmd.Flags().IntVarP(&configBaudRate, "baud", "b", 115200, "baud rate")
@@ -109,7 +109,7 @@ func init() {
 
 func runSaveConfig(cmd *cobra.Command, args []string) {
 	name := args[0]
-	
+
 	// Create configuration
 	cfg := serial.SerialConfig{
 		Port:     configPort,
@@ -119,20 +119,20 @@ func runSaveConfig(cmd *cobra.Command, args []string) {
 		Parity:   configParity,
 		Timeout:  time.Duration(configTimeout) * time.Second,
 	}
-	
+
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Save configuration
 	configManager := config.NewFileConfigManager("")
 	if err := configManager.SaveConfig(name, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving configuration: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Configuration '%s' saved successfully.\n", name)
 	fmt.Printf("  Port: %s\n", cfg.Port)
 	fmt.Printf("  Baud Rate: %d\n", cfg.BaudRate)
@@ -144,7 +144,7 @@ func runSaveConfig(cmd *cobra.Command, args []string) {
 
 func runLoadConfig(cmd *cobra.Command, args []string) {
 	name := args[0]
-	
+
 	// Load configuration
 	configManager := config.NewFileConfigManager("")
 	cfg, err := configManager.LoadConfig(name)
@@ -152,10 +152,10 @@ func runLoadConfig(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading configuration '%s': %v\n", name, err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Loading configuration '%s'...\n", name)
 	fmt.Printf("Connecting to %s at %d baud...\n", cfg.Port, cfg.BaudRate)
-	
+
 	// Launch terminal with loaded configuration
 	if err := app.RunInteractive(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running terminal: %v\n", err)
@@ -171,28 +171,28 @@ func runListConfigs(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error listing configurations: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	if len(configs) == 0 {
 		fmt.Println("No saved configurations found.")
 		fmt.Println("\nUse 'serial-terminal config save <name>' to save a configuration.")
 		return
 	}
-	
+
 	fmt.Printf("Found %d saved configuration(s):\n\n", len(configs))
-	
+
 	// Create a tabwriter for aligned output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tPORT\tBAUD\tLAST USED\tCREATED")
 	fmt.Fprintln(w, "----\t----\t----\t---------\t-------")
-	
+
 	for _, cfg := range configs {
 		lastUsed := "Never"
 		if !cfg.LastUsedAt.IsZero() {
 			lastUsed = cfg.LastUsedAt.Format("2006-01-02 15:04")
 		}
-		
+
 		created := cfg.CreatedAt.Format("2006-01-02 15:04")
-		
+
 		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
 			cfg.Name,
 			cfg.Config.Port,
@@ -200,29 +200,29 @@ func runListConfigs(cmd *cobra.Command, args []string) {
 			lastUsed,
 			created)
 	}
-	
+
 	w.Flush()
-	
+
 	fmt.Println("\nUse 'serial-terminal config load <name>' to connect using a configuration.")
 	fmt.Println("Use 'serial-terminal config show <name>' to see full details.")
 }
 
 func runDeleteConfig(cmd *cobra.Command, args []string) {
 	name := args[0]
-	
+
 	// Delete configuration
 	configManager := config.NewFileConfigManager("")
 	if err := configManager.DeleteConfig(name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error deleting configuration '%s': %v\n", name, err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Configuration '%s' deleted successfully.\n", name)
 }
 
 func runShowConfig(cmd *cobra.Command, args []string) {
 	name := args[0]
-	
+
 	// Load configuration info
 	configManager := config.NewFileConfigManager("")
 	configs, err := configManager.ListConfigs()
@@ -230,7 +230,7 @@ func runShowConfig(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error loading configurations: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// Find the specific configuration
 	var found *config.ConfigInfo
 	for _, cfg := range configs {
@@ -239,12 +239,12 @@ func runShowConfig(cmd *cobra.Command, args []string) {
 			break
 		}
 	}
-	
+
 	if found == nil {
 		fmt.Fprintf(os.Stderr, "Configuration '%s' not found.\n", name)
 		os.Exit(1)
 	}
-	
+
 	// Display configuration details
 	fmt.Printf("Configuration: %s\n", found.Name)
 	fmt.Println("=" + repeatString("=", len(found.Name)+14))
@@ -256,13 +256,13 @@ func runShowConfig(cmd *cobra.Command, args []string) {
 	fmt.Printf("Timeout:     %d seconds\n", found.Config.Timeout)
 	fmt.Println()
 	fmt.Printf("Created:     %s\n", found.CreatedAt.Format(time.RFC3339))
-	
+
 	if !found.LastUsedAt.IsZero() {
 		fmt.Printf("Last Used:   %s\n", found.LastUsedAt.Format(time.RFC3339))
 	} else {
 		fmt.Printf("Last Used:   Never\n")
 	}
-	
+
 	fmt.Println("\nUse 'serial-terminal config load " + name + "' to connect using this configuration.")
 }
 

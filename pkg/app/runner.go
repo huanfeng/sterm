@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	
+
 	"serial-terminal/pkg/serial"
 )
 
@@ -21,12 +21,12 @@ func NewRunner(serialConfig serial.SerialConfig) (*Runner, error) {
 	// Create app config
 	appConfig := DefaultAppConfig()
 	appConfig.SerialConfig = serialConfig
-	
+
 	// Auto-detect terminal size if possible
 	// This is a simplified version - in production you'd use a proper terminal size detection
 	appConfig.TerminalWidth = 80
 	appConfig.TerminalHeight = 24
-	
+
 	return &Runner{
 		config: appConfig,
 	}, nil
@@ -40,16 +40,16 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("failed to create application: %w", err)
 	}
 	r.app = app
-	
+
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	// Start application
 	if err := app.Start(); err != nil {
 		return fmt.Errorf("failed to start application: %w", err)
 	}
-	
+
 	// Print session info
 	fmt.Printf("\n=== Serial Terminal Session Started ===\n")
 	fmt.Printf("Port: %s\n", r.config.SerialConfig.Port)
@@ -61,7 +61,7 @@ func (r *Runner) Run() error {
 	fmt.Printf("Press Ctrl+Shift+Q (or Ctrl+Q) to exit\n")
 	fmt.Printf("Press F1 for help\n")
 	fmt.Printf("=====================================\n\n")
-	
+
 	// Wait for signal or application to stop
 	select {
 	case <-sigChan:
@@ -69,22 +69,22 @@ func (r *Runner) Run() error {
 	case <-r.waitForStop():
 		fmt.Println("\nApplication stopped")
 	}
-	
+
 	// Stop application
 	if err := app.Stop(); err != nil {
 		return fmt.Errorf("failed to stop application: %w", err)
 	}
-	
+
 	// Print session summary
 	r.printSessionSummary()
-	
+
 	return nil
 }
 
 // waitForStop returns a channel that closes when the application stops
 func (r *Runner) waitForStop() <-chan struct{} {
 	stopChan := make(chan struct{})
-	
+
 	go func() {
 		for r.app != nil && r.app.IsRunning() {
 			// Check every 100ms
@@ -92,7 +92,7 @@ func (r *Runner) waitForStop() <-chan struct{} {
 		}
 		close(stopChan)
 	}()
-	
+
 	return stopChan
 }
 
@@ -101,9 +101,9 @@ func (r *Runner) printSessionSummary() {
 	if r.app == nil {
 		return
 	}
-	
+
 	bytesSent, bytesRecv, duration := r.app.GetStats()
-	
+
 	fmt.Printf("\n=== Session Summary ===\n")
 	fmt.Printf("Duration: %v\n", duration)
 	fmt.Printf("Bytes Sent: %d\n", bytesSent)
@@ -125,7 +125,7 @@ func RunInteractive(serialConfig serial.SerialConfig) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return runner.Run()
 }
 
@@ -134,13 +134,13 @@ func RunHeadless(serialConfig serial.SerialConfig, logFile string) error {
 	// Create app config
 	appConfig := DefaultAppConfig()
 	appConfig.SerialConfig = serialConfig
-	
+
 	// Create application
 	app, err := NewApplication(appConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create application: %w", err)
 	}
-	
+
 	// Open log file if specified
 	var logWriter *os.File
 	if logFile != "" {
@@ -150,19 +150,19 @@ func RunHeadless(serialConfig serial.SerialConfig, logFile string) error {
 		}
 		defer logWriter.Close()
 	}
-	
+
 	// Start application
 	if err := app.Start(); err != nil {
 		return fmt.Errorf("failed to start application: %w", err)
 	}
 	defer app.Stop()
-	
+
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	// Run until interrupted
 	<-sigChan
-	
+
 	return nil
 }

@@ -31,15 +31,15 @@ func NewApplication(version string) *Application {
 
 // Session represents an active communication session
 type Session struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Config      config.ConfigInfo   `json:"config"`
-	StartTime   time.Time           `json:"start_time"`
-	EndTime     *time.Time          `json:"end_time,omitempty"`
-	DataSize    int64               `json:"data_size"`
-	IsActive    bool                `json:"is_active"`
-	Description string              `json:"description,omitempty"`
-	Tags        []string            `json:"tags,omitempty"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Config      config.ConfigInfo `json:"config"`
+	StartTime   time.Time         `json:"start_time"`
+	EndTime     *time.Time        `json:"end_time,omitempty"`
+	DataSize    int64             `json:"data_size"`
+	IsActive    bool              `json:"is_active"`
+	Description string            `json:"description,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
 }
 
 // Validate checks if the session is valid
@@ -47,27 +47,27 @@ func (s Session) Validate() error {
 	if s.ID == "" {
 		return fmt.Errorf("session ID cannot be empty")
 	}
-	
+
 	if s.Name == "" {
 		return fmt.Errorf("session name cannot be empty")
 	}
-	
+
 	if err := s.Config.Validate(); err != nil {
 		return fmt.Errorf("invalid session config: %w", err)
 	}
-	
+
 	if s.StartTime.IsZero() {
 		return fmt.Errorf("start time cannot be zero")
 	}
-	
+
 	if s.EndTime != nil && s.EndTime.Before(s.StartTime) {
 		return fmt.Errorf("end time cannot be before start time")
 	}
-	
+
 	if s.DataSize < 0 {
 		return fmt.Errorf("data size cannot be negative")
 	}
-	
+
 	return nil
 }
 
@@ -114,7 +114,7 @@ func (e ErrorType) String() string {
 	types := []string{
 		"serial", "config", "terminal", "history", "file", "validation", "network", "permission",
 	}
-	
+
 	if int(e) < len(types) {
 		return types[e]
 	}
@@ -179,19 +179,19 @@ func (c ApplicationConfig) Validate() error {
 	if err := c.DefaultSerialConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid default serial config: %w", err)
 	}
-	
+
 	if c.HistoryMaxSize <= 0 {
 		return fmt.Errorf("history max size must be positive, got: %d", c.HistoryMaxSize)
 	}
-	
+
 	if c.TerminalWidth <= 0 {
 		return fmt.Errorf("terminal width must be positive, got: %d", c.TerminalWidth)
 	}
-	
+
 	if c.TerminalHeight <= 0 {
 		return fmt.Errorf("terminal height must be positive, got: %d", c.TerminalHeight)
 	}
-	
+
 	validLogLevels := []string{"debug", "info", "warn", "error"}
 	validLogLevel := false
 	for _, level := range validLogLevels {
@@ -203,11 +203,11 @@ func (c ApplicationConfig) Validate() error {
 	if !validLogLevel {
 		return fmt.Errorf("invalid log level: %s", c.LogLevel)
 	}
-	
+
 	if c.ConfigDir == "" {
 		return fmt.Errorf("config directory cannot be empty")
 	}
-	
+
 	return nil
 }
 

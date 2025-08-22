@@ -79,19 +79,19 @@ func (h HistoryEntry) Validate() error {
 	if h.Timestamp.IsZero() {
 		return fmt.Errorf("timestamp cannot be zero")
 	}
-	
+
 	if h.Direction != DirectionInput && h.Direction != DirectionOutput {
 		return fmt.Errorf("invalid direction: %d", h.Direction)
 	}
-	
+
 	if h.Data == nil {
 		return fmt.Errorf("data cannot be nil")
 	}
-	
+
 	if h.Length != len(h.Data) {
 		return fmt.Errorf("length mismatch: expected %d, got %d", len(h.Data), h.Length)
 	}
-	
+
 	return nil
 }
 
@@ -109,29 +109,29 @@ func NewHistoryEntry(data []byte, direction Direction) HistoryEntry {
 
 // HistoryStats provides statistics about the history buffer
 type HistoryStats struct {
-	TotalEntries   int           `json:"total_entries"`
-	TotalBytes     int           `json:"total_bytes"`
-	InputEntries   int           `json:"input_entries"`
-	OutputEntries  int           `json:"output_entries"`
-	InputBytes     int           `json:"input_bytes"`
-	OutputBytes    int           `json:"output_bytes"`
-	MaxSize        int           `json:"max_size"`
-	CurrentSize    int           `json:"current_size"`
-	OldestEntry    *time.Time    `json:"oldest_entry,omitempty"`
-	NewestEntry    *time.Time    `json:"newest_entry,omitempty"`
+	TotalEntries  int        `json:"total_entries"`
+	TotalBytes    int        `json:"total_bytes"`
+	InputEntries  int        `json:"input_entries"`
+	OutputEntries int        `json:"output_entries"`
+	InputBytes    int        `json:"input_bytes"`
+	OutputBytes   int        `json:"output_bytes"`
+	MaxSize       int        `json:"max_size"`
+	CurrentSize   int        `json:"current_size"`
+	OldestEntry   *time.Time `json:"oldest_entry,omitempty"`
+	NewestEntry   *time.Time `json:"newest_entry,omitempty"`
 }
 
 // RingBufferHistoryManager implements HistoryManager using a ring buffer
 type RingBufferHistoryManager struct {
-	buffer      []byte
-	maxSize     int
-	writePos    int
-	readPos     int
-	size        int
-	entries     []HistoryEntry
-	maxEntries  int
-	entryCount  int
-	entryStart  int
+	buffer     []byte
+	maxSize    int
+	writePos   int
+	readPos    int
+	size       int
+	entries    []HistoryEntry
+	maxEntries int
+	entryCount int
+	entryStart int
 }
 
 // NewRingBufferHistoryManager creates a new ring buffer history manager
@@ -139,12 +139,12 @@ func NewRingBufferHistoryManager(maxSize int) *RingBufferHistoryManager {
 	if maxSize <= 0 {
 		maxSize = 10 * 1024 * 1024 // Default 10MB
 	}
-	
+
 	maxEntries := maxSize / 10 // Estimate 10 bytes per entry on average
 	if maxEntries < 1000 {
 		maxEntries = 1000 // Minimum 1000 entries
 	}
-	
+
 	return &RingBufferHistoryManager{
 		buffer:     make([]byte, maxSize),
 		maxSize:    maxSize,
@@ -163,43 +163,43 @@ func (rbhm *RingBufferHistoryManager) Write(data []byte, direction Direction) er
 	if data == nil {
 		return fmt.Errorf("data cannot be nil")
 	}
-	
+
 	if direction != DirectionInput && direction != DirectionOutput {
 		return fmt.Errorf("invalid direction: %d", direction)
 	}
-	
+
 	// Create history entry
 	entry := NewHistoryEntry(data, direction)
-	
+
 	// Add entry to entries ring buffer
 	rbhm.entries[rbhm.entryStart] = entry
 	rbhm.entryStart = (rbhm.entryStart + 1) % rbhm.maxEntries
-	
+
 	if rbhm.entryCount < rbhm.maxEntries {
 		rbhm.entryCount++
 	}
-	
+
 	// Add data to byte buffer
 	dataLen := len(data)
-	
+
 	// Check if we need to wrap around or make space
 	for rbhm.size+dataLen > rbhm.maxSize {
 		// Remove oldest data to make space
 		if rbhm.size == 0 {
 			break // Buffer is empty, can't remove more
 		}
-		
+
 		// Move read position forward to free space
 		oldSize := rbhm.size
 		rbhm.readPos = (rbhm.readPos + 1) % rbhm.maxSize
 		rbhm.size--
-		
+
 		// Prevent infinite loop
 		if rbhm.size == oldSize {
 			break
 		}
 	}
-	
+
 	// Write data to buffer
 	for _, b := range data {
 		if rbhm.size < rbhm.maxSize {
@@ -213,7 +213,7 @@ func (rbhm *RingBufferHistoryManager) Write(data []byte, direction Direction) er
 			rbhm.readPos = (rbhm.readPos + 1) % rbhm.maxSize
 		}
 	}
-	
+
 	return nil
 }
 
@@ -222,27 +222,27 @@ func (rbhm *RingBufferHistoryManager) Read(offset, length int) ([]byte, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset cannot be negative")
 	}
-	
+
 	if length < 0 {
 		return nil, fmt.Errorf("length cannot be negative")
 	}
-	
+
 	if offset >= rbhm.size {
 		return []byte{}, nil // Return empty slice if offset is beyond data
 	}
-	
+
 	// Adjust length if it would read beyond available data
 	if offset+length > rbhm.size {
 		length = rbhm.size - offset
 	}
-	
+
 	result := make([]byte, length)
-	
+
 	for i := 0; i < length; i++ {
 		pos := (rbhm.readPos + offset + i) % rbhm.maxSize
 		result[i] = rbhm.buffer[pos]
 	}
-	
+
 	return result, nil
 }
 
@@ -261,12 +261,12 @@ func (rbhm *RingBufferHistoryManager) SaveToFile(filename string, format FileFor
 	if filename == "" {
 		return fmt.Errorf("filename cannot be empty")
 	}
-	
+
 	entries, err := rbhm.GetEntries(0, rbhm.entryCount)
 	if err != nil {
 		return fmt.Errorf("failed to get entries: %w", err)
 	}
-	
+
 	return saveEntriesToFile(entries, filename, format)
 }
 
@@ -277,16 +277,16 @@ func (rbhm *RingBufferHistoryManager) Clear() error {
 	rbhm.size = 0
 	rbhm.entryCount = 0
 	rbhm.entryStart = 0
-	
+
 	// Clear the buffers
 	for i := range rbhm.buffer {
 		rbhm.buffer[i] = 0
 	}
-	
+
 	for i := range rbhm.entries {
 		rbhm.entries[i] = HistoryEntry{}
 	}
-	
+
 	return nil
 }
 
@@ -295,11 +295,11 @@ func (rbhm *RingBufferHistoryManager) SetMaxSize(size int) error {
 	if size <= 0 {
 		return fmt.Errorf("size must be positive")
 	}
-	
+
 	if size == rbhm.maxSize {
 		return nil // No change needed
 	}
-	
+
 	// Create new buffer
 	newBuffer := make([]byte, size)
 	newMaxEntries := size / 10
@@ -307,7 +307,7 @@ func (rbhm *RingBufferHistoryManager) SetMaxSize(size int) error {
 		newMaxEntries = 1000
 	}
 	newEntries := make([]HistoryEntry, newMaxEntries)
-	
+
 	// Copy existing data if new buffer is larger
 	if size > rbhm.maxSize {
 		// Copy all existing data
@@ -315,18 +315,18 @@ func (rbhm *RingBufferHistoryManager) SetMaxSize(size int) error {
 			pos := (rbhm.readPos + i) % rbhm.maxSize
 			newBuffer[i] = rbhm.buffer[pos]
 		}
-		
+
 		// Copy existing entries
 		copyCount := rbhm.entryCount
 		if copyCount > newMaxEntries {
 			copyCount = newMaxEntries
 		}
-		
+
 		for i := 0; i < copyCount; i++ {
 			entryPos := (rbhm.entryStart - rbhm.entryCount + i + rbhm.maxEntries) % rbhm.maxEntries
 			newEntries[i] = rbhm.entries[entryPos]
 		}
-		
+
 		rbhm.readPos = 0
 		rbhm.writePos = rbhm.size
 		rbhm.entryStart = copyCount
@@ -337,38 +337,38 @@ func (rbhm *RingBufferHistoryManager) SetMaxSize(size int) error {
 		if copySize > rbhm.size {
 			copySize = rbhm.size
 		}
-		
+
 		// Copy most recent data
 		startOffset := rbhm.size - copySize
 		for i := 0; i < copySize; i++ {
 			pos := (rbhm.readPos + startOffset + i) % rbhm.maxSize
 			newBuffer[i] = rbhm.buffer[pos]
 		}
-		
+
 		// Copy most recent entries
 		copyCount := newMaxEntries
 		if copyCount > rbhm.entryCount {
 			copyCount = rbhm.entryCount
 		}
-		
+
 		startEntry := rbhm.entryCount - copyCount
 		for i := 0; i < copyCount; i++ {
 			entryPos := (rbhm.entryStart - rbhm.entryCount + startEntry + i + rbhm.maxEntries) % rbhm.maxEntries
 			newEntries[i] = rbhm.entries[entryPos]
 		}
-		
+
 		rbhm.readPos = 0
 		rbhm.writePos = copySize
 		rbhm.size = copySize
 		rbhm.entryStart = copyCount
 		rbhm.entryCount = copyCount
 	}
-	
+
 	rbhm.buffer = newBuffer
 	rbhm.maxSize = size
 	rbhm.entries = newEntries
 	rbhm.maxEntries = newMaxEntries
-	
+
 	return nil
 }
 
@@ -382,27 +382,27 @@ func (rbhm *RingBufferHistoryManager) GetEntries(start, count int) ([]HistoryEnt
 	if start < 0 {
 		return nil, fmt.Errorf("start cannot be negative")
 	}
-	
+
 	if count < 0 {
 		return nil, fmt.Errorf("count cannot be negative")
 	}
-	
+
 	if start >= rbhm.entryCount {
 		return []HistoryEntry{}, nil
 	}
-	
+
 	// Adjust count if it would read beyond available entries
 	if start+count > rbhm.entryCount {
 		count = rbhm.entryCount - start
 	}
-	
+
 	result := make([]HistoryEntry, count)
-	
+
 	for i := 0; i < count; i++ {
 		entryPos := (rbhm.entryStart - rbhm.entryCount + start + i + rbhm.maxEntries) % rbhm.maxEntries
 		result[i] = rbhm.entries[entryPos]
 	}
-	
+
 	return result, nil
 }
 
@@ -414,12 +414,12 @@ func (rbhm *RingBufferHistoryManager) GetStats() HistoryStats {
 		MaxSize:      rbhm.maxSize,
 		CurrentSize:  rbhm.size,
 	}
-	
+
 	// Calculate input/output statistics
 	for i := 0; i < rbhm.entryCount; i++ {
 		entryPos := (rbhm.entryStart - rbhm.entryCount + i + rbhm.maxEntries) % rbhm.maxEntries
 		entry := rbhm.entries[entryPos]
-		
+
 		if entry.Direction == DirectionInput {
 			stats.InputEntries++
 			stats.InputBytes += entry.Length
@@ -427,17 +427,17 @@ func (rbhm *RingBufferHistoryManager) GetStats() HistoryStats {
 			stats.OutputEntries++
 			stats.OutputBytes += entry.Length
 		}
-		
+
 		// Track oldest and newest entries
 		if i == 0 || (stats.OldestEntry != nil && entry.Timestamp.Before(*stats.OldestEntry)) {
 			stats.OldestEntry = &entry.Timestamp
 		}
-		
+
 		if i == 0 || (stats.NewestEntry != nil && entry.Timestamp.After(*stats.NewestEntry)) {
 			stats.NewestEntry = &entry.Timestamp
 		}
 	}
-	
+
 	return stats
 }
 
@@ -448,7 +448,7 @@ func saveEntriesToFile(entries []HistoryEntry, filename string, format FileForma
 		return fmt.Errorf("failed to create file: %w", err)
 	}
 	defer file.Close()
-	
+
 	switch format {
 	case FormatPlainText:
 		return saveAsPlainText(file, entries)
@@ -478,12 +478,12 @@ func saveAsTimestamped(file *os.File, entries []HistoryEntry) error {
 		if entry.Direction == DirectionOutput {
 			direction = ">>"
 		}
-		
-		line := fmt.Sprintf("[%s] %s %s\n", 
-			entry.Timestamp.Format("2006-01-02 15:04:05.000"), 
-			direction, 
+
+		line := fmt.Sprintf("[%s] %s %s\n",
+			entry.Timestamp.Format("2006-01-02 15:04:05.000"),
+			direction,
 			strings.ReplaceAll(string(entry.Data), "\n", "\\n"))
-		
+
 		if _, err := file.WriteString(line); err != nil {
 			return fmt.Errorf("failed to write timestamped data: %w", err)
 		}
@@ -495,7 +495,7 @@ func saveAsTimestamped(file *os.File, entries []HistoryEntry) error {
 func saveAsJSON(file *os.File, entries []HistoryEntry) error {
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	
+
 	data := struct {
 		Entries []HistoryEntry `json:"entries"`
 		Count   int            `json:"count"`
@@ -503,19 +503,19 @@ func saveAsJSON(file *os.File, entries []HistoryEntry) error {
 		Entries: entries,
 		Count:   len(entries),
 	}
-	
+
 	if err := encoder.Encode(data); err != nil {
 		return fmt.Errorf("failed to encode JSON: %w", err)
 	}
-	
+
 	return nil
 }
 
 // MemoryHistoryManager implements HistoryManager using simple in-memory storage
 // This is a simpler alternative to RingBufferHistoryManager for smaller datasets
 type MemoryHistoryManager struct {
-	entries []HistoryEntry
-	maxSize int
+	entries    []HistoryEntry
+	maxSize    int
 	maxEntries int
 }
 
@@ -524,7 +524,7 @@ func NewMemoryHistoryManager(maxSize int) *MemoryHistoryManager {
 	if maxSize <= 0 {
 		maxSize = 10 * 1024 * 1024 // Default 10MB
 	}
-	
+
 	return &MemoryHistoryManager{
 		entries:    make([]HistoryEntry, 0),
 		maxSize:    maxSize,
@@ -537,29 +537,29 @@ func (mhm *MemoryHistoryManager) Write(data []byte, direction Direction) error {
 	if data == nil {
 		return fmt.Errorf("data cannot be nil")
 	}
-	
+
 	if direction != DirectionInput && direction != DirectionOutput {
 		return fmt.Errorf("invalid direction: %d", direction)
 	}
-	
+
 	entry := NewHistoryEntry(data, direction)
-	
+
 	// Check if we need to remove old entries
 	currentSize := mhm.calculateTotalSize()
-	for currentSize + len(data) > mhm.maxSize && len(mhm.entries) > 0 {
+	for currentSize+len(data) > mhm.maxSize && len(mhm.entries) > 0 {
 		// Remove oldest entry
 		removed := mhm.entries[0]
 		mhm.entries = mhm.entries[1:]
 		currentSize -= len(removed.Data)
 	}
-	
+
 	// Check entry count limit
 	if len(mhm.entries) >= mhm.maxEntries {
 		// Remove oldest entries to make room
 		removeCount := len(mhm.entries) - mhm.maxEntries + 1
 		mhm.entries = mhm.entries[removeCount:]
 	}
-	
+
 	mhm.entries = append(mhm.entries, entry)
 	return nil
 }
@@ -569,26 +569,26 @@ func (mhm *MemoryHistoryManager) Read(offset, length int) ([]byte, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("offset cannot be negative")
 	}
-	
+
 	if length < 0 {
 		return nil, fmt.Errorf("length cannot be negative")
 	}
-	
+
 	// Concatenate all data
 	var allData []byte
 	for _, entry := range mhm.entries {
 		allData = append(allData, entry.Data...)
 	}
-	
+
 	if offset >= len(allData) {
 		return []byte{}, nil
 	}
-	
+
 	end := offset + length
 	if end > len(allData) {
 		end = len(allData)
 	}
-	
+
 	return allData[offset:end], nil
 }
 
@@ -607,7 +607,7 @@ func (mhm *MemoryHistoryManager) SaveToFile(filename string, format FileFormat) 
 	if filename == "" {
 		return fmt.Errorf("filename cannot be empty")
 	}
-	
+
 	return saveEntriesToFile(mhm.entries, filename, format)
 }
 
@@ -622,10 +622,10 @@ func (mhm *MemoryHistoryManager) SetMaxSize(size int) error {
 	if size <= 0 {
 		return fmt.Errorf("size must be positive")
 	}
-	
+
 	mhm.maxSize = size
 	mhm.maxEntries = size / 10
-	
+
 	// Remove entries if current size exceeds new limit
 	currentSize := mhm.calculateTotalSize()
 	for currentSize > size && len(mhm.entries) > 0 {
@@ -633,7 +633,7 @@ func (mhm *MemoryHistoryManager) SetMaxSize(size int) error {
 		mhm.entries = mhm.entries[1:]
 		currentSize -= len(removed.Data)
 	}
-	
+
 	return nil
 }
 
@@ -647,24 +647,24 @@ func (mhm *MemoryHistoryManager) GetEntries(start, count int) ([]HistoryEntry, e
 	if start < 0 {
 		return nil, fmt.Errorf("start cannot be negative")
 	}
-	
+
 	if count < 0 {
 		return nil, fmt.Errorf("count cannot be negative")
 	}
-	
+
 	if start >= len(mhm.entries) {
 		return []HistoryEntry{}, nil
 	}
-	
+
 	end := start + count
 	if end > len(mhm.entries) {
 		end = len(mhm.entries)
 	}
-	
+
 	// Return a copy of the entries
 	result := make([]HistoryEntry, end-start)
 	copy(result, mhm.entries[start:end])
-	
+
 	return result, nil
 }
 
@@ -680,24 +680,24 @@ func (mhm *MemoryHistoryManager) calculateTotalSize() int {
 // PersistentHistoryManager extends HistoryManager with automatic persistence features
 type PersistentHistoryManager struct {
 	HistoryManager
-	backupDir       string
-	autoBackup      bool
-	backupInterval  time.Duration
-	maxBackupFiles  int
-	tempFilePrefix  string
-	lastBackupTime  time.Time
+	backupDir      string
+	autoBackup     bool
+	backupInterval time.Duration
+	maxBackupFiles int
+	tempFilePrefix string
+	lastBackupTime time.Time
 }
 
 // NewPersistentHistoryManager creates a new persistent history manager
 func NewPersistentHistoryManager(baseManager HistoryManager, backupDir string) *PersistentHistoryManager {
 	return &PersistentHistoryManager{
-		HistoryManager:  baseManager,
-		backupDir:       backupDir,
-		autoBackup:      true,
-		backupInterval:  time.Hour, // Default backup every hour
-		maxBackupFiles:  24,        // Keep 24 backup files (24 hours)
-		tempFilePrefix:  "history_temp_",
-		lastBackupTime:  time.Now(),
+		HistoryManager: baseManager,
+		backupDir:      backupDir,
+		autoBackup:     true,
+		backupInterval: time.Hour, // Default backup every hour
+		maxBackupFiles: 24,        // Keep 24 backup files (24 hours)
+		tempFilePrefix: "history_temp_",
+		lastBackupTime: time.Now(),
 	}
 }
 
@@ -714,12 +714,12 @@ func (phm *PersistentHistoryManager) Write(data []byte, direction Direction) err
 	if err != nil {
 		return err
 	}
-	
+
 	// Check if backup is needed
 	if phm.autoBackup && time.Since(phm.lastBackupTime) >= phm.backupInterval {
 		go phm.performAutoBackup() // Async backup to avoid blocking
 	}
-	
+
 	return nil
 }
 
@@ -728,19 +728,19 @@ func (phm *PersistentHistoryManager) performAutoBackup() {
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("history_backup_%s.json", timestamp)
 	backupPath := filepath.Join(phm.backupDir, filename)
-	
+
 	// Create backup directory if it doesn't exist
 	if err := os.MkdirAll(phm.backupDir, 0755); err != nil {
 		return // Silently fail for auto backup
 	}
-	
+
 	// Save current history
 	if err := phm.HistoryManager.SaveToFile(backupPath, FormatJSON); err != nil {
 		return // Silently fail for auto backup
 	}
-	
+
 	phm.lastBackupTime = time.Now()
-	
+
 	// Clean up old backup files
 	phm.cleanupOldBackups()
 }
@@ -751,7 +751,7 @@ func (phm *PersistentHistoryManager) cleanupOldBackups() {
 	if err != nil {
 		return
 	}
-	
+
 	// Filter backup files and sort by modification time
 	var backupFiles []os.FileInfo
 	for _, file := range files {
@@ -762,7 +762,7 @@ func (phm *PersistentHistoryManager) cleanupOldBackups() {
 			}
 		}
 	}
-	
+
 	// Remove excess files (keep only maxBackupFiles)
 	if len(backupFiles) > phm.maxBackupFiles {
 		// Sort by modification time (oldest first)
@@ -773,7 +773,7 @@ func (phm *PersistentHistoryManager) cleanupOldBackups() {
 				}
 			}
 		}
-		
+
 		// Remove oldest files
 		filesToRemove := len(backupFiles) - phm.maxBackupFiles
 		for i := 0; i < filesToRemove; i++ {
@@ -790,7 +790,7 @@ func (phm *PersistentHistoryManager) CreateTempFile() (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
-	
+
 	return tempFile, nil
 }
 
@@ -801,15 +801,15 @@ func (phm *PersistentHistoryManager) SaveToTempFile(format FileFormat) (string, 
 		return "", err
 	}
 	defer tempFile.Close()
-	
+
 	tempPath := tempFile.Name()
-	
+
 	err = phm.HistoryManager.SaveToFile(tempPath, format)
 	if err != nil {
 		os.Remove(tempPath) // Clean up on error
 		return "", fmt.Errorf("failed to save to temp file: %w", err)
 	}
-	
+
 	return tempPath, nil
 }
 
@@ -819,27 +819,27 @@ func (phm *PersistentHistoryManager) LoadFromFile(filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
-	
+
 	// Try to parse as JSON first
 	var historyData struct {
 		Entries []HistoryEntry `json:"entries"`
 	}
-	
+
 	if err := json.Unmarshal(data, &historyData); err != nil {
 		return fmt.Errorf("failed to parse history file: %w", err)
 	}
-	
+
 	// Clear current history and load entries
 	if err := phm.HistoryManager.Clear(); err != nil {
 		return fmt.Errorf("failed to clear current history: %w", err)
 	}
-	
+
 	for _, entry := range historyData.Entries {
 		if err := phm.HistoryManager.Write(entry.Data, entry.Direction); err != nil {
 			return fmt.Errorf("failed to restore entry: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -849,14 +849,14 @@ func (phm *PersistentHistoryManager) GetBackupFiles() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read backup directory: %w", err)
 	}
-	
+
 	var backupFiles []string
 	for _, file := range files {
 		if strings.HasPrefix(file.Name(), "history_backup_") && strings.HasSuffix(file.Name(), ".json") {
 			backupFiles = append(backupFiles, file.Name())
 		}
 	}
-	
+
 	return backupFiles, nil
 }
 
@@ -893,29 +893,29 @@ func (phm *PersistentHistoryManager) CompactHistory(targetSizePercent float64) e
 	if targetSizePercent <= 0 || targetSizePercent >= 100 {
 		return fmt.Errorf("target size percent must be between 0 and 100")
 	}
-	
+
 	currentSize := phm.HistoryManager.GetSize()
 	maxSize := phm.HistoryManager.GetMaxSize()
 	targetSize := int(float64(maxSize) * targetSizePercent / 100)
-	
+
 	if currentSize <= targetSize {
 		return nil // No compaction needed
 	}
-	
+
 	// Create backup before compaction
 	if phm.autoBackup {
 		phm.performAutoBackup()
 	}
-	
+
 	// For ring buffer, we can adjust the size
 	if rbhm, ok := phm.HistoryManager.(*RingBufferHistoryManager); ok {
 		return rbhm.SetMaxSize(targetSize)
 	}
-	
+
 	// For memory manager, we need to remove old entries
 	if mhm, ok := phm.HistoryManager.(*MemoryHistoryManager); ok {
 		return mhm.SetMaxSize(targetSize)
 	}
-	
+
 	return fmt.Errorf("compaction not supported for this history manager type")
 }

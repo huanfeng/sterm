@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	
+
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
 )
@@ -27,15 +27,15 @@ func (c SerialConfig) Validate() error {
 	if c.Port == "" {
 		return fmt.Errorf("port cannot be empty")
 	}
-	
+
 	// Common standard baud rates
 	standardBaudRates := []int{
-		110, 300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 38400, 
+		110, 300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 38400,
 		57600, 115200, 128000, 230400, 256000, 460800, 500000, 576000,
 		921600, 1000000, 1152000, 1500000, 2000000, 2500000, 3000000,
 		3500000, 4000000,
 	}
-	
+
 	// Special baud rates often used in embedded systems
 	specialBaudRates := []int{
 		74880,   // ESP8266 boot mode
@@ -43,7 +43,7 @@ func (c SerialConfig) Validate() error {
 		876000,  // Some USB-UART chips
 		1843200, // High speed UART
 	}
-	
+
 	// Check if it's a standard rate
 	isStandard := false
 	for _, rate := range standardBaudRates {
@@ -52,7 +52,7 @@ func (c SerialConfig) Validate() error {
 			break
 		}
 	}
-	
+
 	// Check if it's a special rate
 	if !isStandard {
 		for _, rate := range specialBaudRates {
@@ -62,26 +62,26 @@ func (c SerialConfig) Validate() error {
 			}
 		}
 	}
-	
+
 	// Allow any positive baud rate, but warn for non-standard rates
 	if c.BaudRate <= 0 {
 		return fmt.Errorf("baud rate must be positive, got: %d", c.BaudRate)
 	}
-	
+
 	// For very high or unusual rates, just warn (don't error)
 	if !isStandard && c.BaudRate > 4000000 {
 		// This is just a warning in the validation, actual support depends on hardware
 		// The go.bug.st/serial library will handle hardware limitations
 	}
-	
+
 	if c.DataBits < 5 || c.DataBits > 8 {
 		return fmt.Errorf("data bits must be between 5 and 8, got: %d", c.DataBits)
 	}
-	
+
 	if c.StopBits < 1 || c.StopBits > 2 {
 		return fmt.Errorf("stop bits must be 1 or 2, got: %d", c.StopBits)
 	}
-	
+
 	validParity := []string{"none", "odd", "even", "mark", "space"}
 	validParityFound := false
 	for _, p := range validParity {
@@ -93,11 +93,11 @@ func (c SerialConfig) Validate() error {
 	if !validParityFound {
 		return fmt.Errorf("invalid parity: %s", c.Parity)
 	}
-	
+
 	if c.Timeout < 0 {
 		return fmt.Errorf("timeout cannot be negative")
 	}
-	
+
 	return nil
 }
 
@@ -168,11 +168,11 @@ func (sp *CrossPlatformSerialPort) Open(config SerialConfig) error {
 	if sp.isOpen {
 		return fmt.Errorf("serial port is already open")
 	}
-	
+
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
-	
+
 	// Convert our config to go.bug.st/serial config
 	mode := &serial.Mode{
 		BaudRate: config.BaudRate,
@@ -180,12 +180,12 @@ func (sp *CrossPlatformSerialPort) Open(config SerialConfig) error {
 		StopBits: convertStopBits(config.StopBits),
 		Parity:   convertParity(config.Parity),
 	}
-	
+
 	port, err := serial.Open(config.Port, mode)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port %s: %w", config.Port, err)
 	}
-	
+
 	// Set read timeout if specified
 	if config.Timeout > 0 {
 		if err := port.SetReadTimeout(config.Timeout); err != nil {
@@ -193,11 +193,11 @@ func (sp *CrossPlatformSerialPort) Open(config SerialConfig) error {
 			return fmt.Errorf("failed to set read timeout: %w", err)
 		}
 	}
-	
+
 	sp.port = port
 	sp.config = config
 	sp.isOpen = true
-	
+
 	return nil
 }
 
@@ -206,15 +206,15 @@ func (sp *CrossPlatformSerialPort) Close() error {
 	if !sp.isOpen {
 		return fmt.Errorf("serial port is not open")
 	}
-	
+
 	err := sp.port.Close()
 	sp.port = nil
 	sp.isOpen = false
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to close serial port: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -223,12 +223,12 @@ func (sp *CrossPlatformSerialPort) Read(buffer []byte) (int, error) {
 	if !sp.isOpen {
 		return 0, fmt.Errorf("serial port is not open")
 	}
-	
+
 	n, err := sp.port.Read(buffer)
 	if err != nil {
 		return n, fmt.Errorf("failed to read from serial port: %w", err)
 	}
-	
+
 	return n, nil
 }
 
@@ -237,12 +237,12 @@ func (sp *CrossPlatformSerialPort) Write(data []byte) (int, error) {
 	if !sp.isOpen {
 		return 0, fmt.Errorf("serial port is not open")
 	}
-	
+
 	n, err := sp.port.Write(data)
 	if err != nil {
 		return n, fmt.Errorf("failed to write to serial port: %w", err)
 	}
-	
+
 	return n, nil
 }
 
@@ -261,11 +261,11 @@ func (sp *CrossPlatformSerialPort) SetReadTimeout(timeout time.Duration) error {
 	if !sp.isOpen {
 		return fmt.Errorf("serial port is not open")
 	}
-	
+
 	if err := sp.port.SetReadTimeout(timeout); err != nil {
 		return fmt.Errorf("failed to set read timeout: %w", err)
 	}
-	
+
 	sp.config.Timeout = timeout
 	return nil
 }
@@ -276,7 +276,7 @@ func (sp *CrossPlatformSerialPort) GetAvailablePorts() ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get available ports: %w", err)
 	}
-	
+
 	return ports, nil
 }
 
@@ -330,19 +330,19 @@ func GetDetailedPortsList() ([]PortInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to get ports list: %w", err)
 		}
-		
+
 		var portInfos []PortInfo
 		for _, portName := range ports {
 			portInfos = append(portInfos, PortInfo{
 				Name: portName,
 			})
 		}
-		
+
 		// Sort ports by name
 		sortPorts(portInfos)
 		return portInfos, nil
 	}
-	
+
 	// Convert detailed ports to our PortInfo structure
 	var portInfos []PortInfo
 	for _, port := range detailedPorts {
@@ -356,10 +356,10 @@ func GetDetailedPortsList() ([]PortInfo, error) {
 		}
 		portInfos = append(portInfos, portInfo)
 	}
-	
+
 	// Sort ports by name
 	sortPorts(portInfos)
-	
+
 	return portInfos, nil
 }
 
@@ -369,11 +369,11 @@ func sortPorts(ports []PortInfo) {
 		// Try to extract port numbers for natural sorting
 		pi := extractPortNumber(ports[i].Name)
 		pj := extractPortNumber(ports[j].Name)
-		
+
 		if pi != pj && pi >= 0 && pj >= 0 {
 			return pi < pj
 		}
-		
+
 		// Fall back to string comparison
 		return ports[i].Name < ports[j].Name
 	})
@@ -387,7 +387,7 @@ func extractPortNumber(portName string) int {
 			return num
 		}
 	}
-	
+
 	// For Unix-like /dev/ttyUSB0, /dev/ttyS0, etc.
 	parts := strings.Split(portName, "/")
 	if len(parts) > 0 {
@@ -404,7 +404,7 @@ func extractPortNumber(portName string) int {
 			}
 		}
 	}
-	
+
 	return -1
 }
 
@@ -414,13 +414,13 @@ func IsPortAvailable(portName string) bool {
 	if err != nil {
 		return false
 	}
-	
+
 	for _, port := range ports {
 		if port == portName {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -497,19 +497,19 @@ func (r RetryConfig) Validate() error {
 	if r.MaxRetries < 0 {
 		return fmt.Errorf("max retries cannot be negative")
 	}
-	
+
 	if r.RetryInterval < 0 {
 		return fmt.Errorf("retry interval cannot be negative")
 	}
-	
+
 	if r.BackoffFactor < 1.0 {
 		return fmt.Errorf("backoff factor must be >= 1.0")
 	}
-	
+
 	if r.MaxInterval < r.RetryInterval {
 		return fmt.Errorf("max interval cannot be less than retry interval")
 	}
-	
+
 	return nil
 }
 
@@ -535,16 +535,16 @@ func (rsp *ResilientSerialPort) OpenWithRetry(config SerialConfig) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
-	
+
 	if err := rsp.retryConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid retry configuration: %w", err)
 	}
-	
+
 	rsp.state = StateConnecting
-	
+
 	var lastErr error
 	interval := rsp.retryConfig.RetryInterval
-	
+
 	for attempt := 0; attempt <= rsp.retryConfig.MaxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(interval)
@@ -554,22 +554,22 @@ func (rsp *ResilientSerialPort) OpenWithRetry(config SerialConfig) error {
 				interval = rsp.retryConfig.MaxInterval
 			}
 		}
-		
+
 		err := rsp.CrossPlatformSerialPort.Open(config)
 		if err == nil {
 			rsp.state = StateConnected
 			rsp.lastError = nil
 			return nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Check if this is a recoverable error
 		if !isRecoverableError(err) {
 			break
 		}
 	}
-	
+
 	rsp.state = StateError
 	rsp.lastError = lastErr
 	return fmt.Errorf("failed to open serial port after %d attempts: %w", rsp.retryConfig.MaxRetries+1, lastErr)
@@ -583,7 +583,7 @@ func (rsp *ResilientSerialPort) Close() error {
 		rsp.lastError = err
 		return err
 	}
-	
+
 	rsp.state = StateDisconnected
 	rsp.lastError = nil
 	return nil
@@ -604,14 +604,14 @@ func (rsp *ResilientSerialPort) Reconnect() error {
 	if rsp.config.Port == "" {
 		return fmt.Errorf("no previous configuration available for reconnection")
 	}
-	
+
 	// Close existing connection if open
 	if rsp.IsOpen() {
 		if err := rsp.Close(); err != nil {
 			return fmt.Errorf("failed to close existing connection: %w", err)
 		}
 	}
-	
+
 	return rsp.OpenWithRetry(rsp.config)
 }
 
@@ -620,9 +620,9 @@ func isRecoverableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	errorStr := err.Error()
-	
+
 	// Common recoverable error patterns
 	recoverablePatterns := []string{
 		"device busy",
@@ -631,24 +631,24 @@ func isRecoverableError(err error) bool {
 		"connection refused",
 		"no such device", // Device might be reconnected
 	}
-	
+
 	for _, pattern := range recoverablePatterns {
 		if contains(errorStr, pattern) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
 // contains checks if a string contains a substring (case-insensitive)
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-		   (s == substr || 
-		    (len(s) > len(substr) && 
-		     (s[:len(substr)] == substr || 
-		      s[len(s)-len(substr):] == substr || 
-		      indexOfSubstring(s, substr) >= 0)))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			(len(s) > len(substr) &&
+				(s[:len(substr)] == substr ||
+					s[len(s)-len(substr):] == substr ||
+					indexOfSubstring(s, substr) >= 0)))
 }
 
 // indexOfSubstring finds the index of a substring in a string
@@ -663,10 +663,10 @@ func indexOfSubstring(s, substr string) int {
 
 // ConfigValidator provides advanced validation for serial configurations
 type ConfigValidator struct {
-	allowedPorts    []string
-	allowedBauds    []int
-	requireTimeout  bool
-	maxTimeout      time.Duration
+	allowedPorts   []string
+	allowedBauds   []int
+	requireTimeout bool
+	maxTimeout     time.Duration
 }
 
 // NewConfigValidator creates a new configuration validator
@@ -702,7 +702,7 @@ func (cv *ConfigValidator) ValidateAdvanced(config SerialConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	
+
 	// Check allowed ports if specified
 	if len(cv.allowedPorts) > 0 {
 		allowed := false
@@ -716,7 +716,7 @@ func (cv *ConfigValidator) ValidateAdvanced(config SerialConfig) error {
 			return fmt.Errorf("port %s is not in the allowed ports list", config.Port)
 		}
 	}
-	
+
 	// Check allowed baud rates
 	if len(cv.allowedBauds) > 0 {
 		allowed := false
@@ -730,16 +730,16 @@ func (cv *ConfigValidator) ValidateAdvanced(config SerialConfig) error {
 			return fmt.Errorf("baud rate %d is not in the allowed baud rates list", config.BaudRate)
 		}
 	}
-	
+
 	// Check timeout requirements
 	if cv.requireTimeout && config.Timeout <= 0 {
 		return fmt.Errorf("timeout is required but not set")
 	}
-	
+
 	if config.Timeout > cv.maxTimeout {
 		return fmt.Errorf("timeout %v exceeds maximum allowed timeout %v", config.Timeout, cv.maxTimeout)
 	}
-	
+
 	return nil
 }
 
@@ -755,21 +755,21 @@ func ListPorts() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Sort ports naturally
 	sort.Slice(ports, func(i, j int) bool {
 		// Try to extract port numbers for natural sorting
 		pi := extractPortNumber(ports[i])
 		pj := extractPortNumber(ports[j])
-		
+
 		if pi != pj && pi >= 0 && pj >= 0 {
 			return pi < pj
 		}
-		
+
 		// Fall back to string comparison
 		return ports[i] < ports[j]
 	})
-	
+
 	return ports, nil
 }
 
@@ -796,41 +796,41 @@ func (hc *HealthChecker) CheckHealth() error {
 	if !hc.port.IsOpen() {
 		return fmt.Errorf("serial port is not open")
 	}
-	
+
 	// Send check data
 	_, err := hc.port.Write(hc.checkData)
 	if err != nil {
 		return fmt.Errorf("failed to send health check data: %w", err)
 	}
-	
+
 	// Read response with timeout
 	buffer := make([]byte, len(hc.expectedResp))
-	
+
 	// Set a temporary timeout for health check
 	originalTimeout := hc.port.GetConfig().Timeout
 	if err := hc.port.SetReadTimeout(hc.timeout); err != nil {
 		return fmt.Errorf("failed to set health check timeout: %w", err)
 	}
-	
+
 	// Restore original timeout after health check
 	defer func() {
 		hc.port.SetReadTimeout(originalTimeout)
 	}()
-	
+
 	n, err := hc.port.Read(buffer)
 	if err != nil {
 		return fmt.Errorf("failed to read health check response: %w", err)
 	}
-	
+
 	if n != len(hc.expectedResp) {
 		return fmt.Errorf("health check response length mismatch: expected %d, got %d", len(hc.expectedResp), n)
 	}
-	
+
 	for i, b := range hc.expectedResp {
 		if buffer[i] != b {
 			return fmt.Errorf("health check response mismatch at byte %d: expected %02x, got %02x", i, b, buffer[i])
 		}
 	}
-	
+
 	return nil
 }

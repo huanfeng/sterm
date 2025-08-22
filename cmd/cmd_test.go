@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-	
+
 	"github.com/spf13/cobra"
 	"serial-terminal/pkg/serial"
 )
@@ -15,20 +15,20 @@ import (
 func TestRootCommand(t *testing.T) {
 	// Just test that the command is properly configured
 	// We can't easily test the full execution without mocking a lot
-	
+
 	// Check basic command properties
 	if rootCmd.Use != "serial-terminal" {
 		t.Errorf("rootCmd.Use = %s, want serial-terminal", rootCmd.Use)
 	}
-	
+
 	if rootCmd.Short == "" {
 		t.Error("rootCmd.Short should not be empty")
 	}
-	
+
 	// Check that subcommands are registered
 	subcommands := rootCmd.Commands()
 	expectedCommands := []string{"list", "config", "connect"}
-	
+
 	for _, expected := range expectedCommands {
 		found := false
 		for _, cmd := range subcommands {
@@ -48,7 +48,7 @@ func TestListCommand(t *testing.T) {
 	// Test list command should just not error
 	// Since we can't mock serial ports easily, just verify it runs
 	listCmd.Run(listCmd, []string{})
-	
+
 	// The function actually prints to stdout, so we can't easily capture output in this test
 	// But since it doesn't return an error, we just verify it completes
 	// If it panics, the test will fail
@@ -58,21 +58,21 @@ func TestListCommand(t *testing.T) {
 func TestConfigCommand(t *testing.T) {
 	// Create a buffer to capture output
 	output := &bytes.Buffer{}
-	
+
 	// Create a new command for testing
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(configCmd)
 	cmd.SetOut(output)
 	cmd.SetErr(output)
-	
+
 	// Test config help
 	cmd.SetArgs([]string{"config", "--help"})
 	err := cmd.Execute()
-	
+
 	if err != nil {
 		t.Errorf("config --help failed: %v", err)
 	}
-	
+
 	// Check that output contains expected subcommands
 	out := output.String()
 	expectedCommands := []string{
@@ -82,7 +82,7 @@ func TestConfigCommand(t *testing.T) {
 		"delete",
 		"show",
 	}
-	
+
 	for _, expected := range expectedCommands {
 		if !strings.Contains(out, expected) {
 			t.Errorf("Expected config help to contain '%s', but it doesn't", expected)
@@ -94,21 +94,21 @@ func TestConfigCommand(t *testing.T) {
 func TestConnectCommand(t *testing.T) {
 	// Create a buffer to capture output
 	output := &bytes.Buffer{}
-	
+
 	// Create a new command for testing
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(connectCmd)
 	cmd.SetOut(output)
 	cmd.SetErr(output)
-	
+
 	// Test connect help
 	cmd.SetArgs([]string{"connect", "--help"})
 	err := cmd.Execute()
-	
+
 	if err != nil {
 		t.Errorf("connect --help failed: %v", err)
 	}
-	
+
 	// Check that output contains expected text
 	out := output.String()
 	expectedTexts := []string{
@@ -116,7 +116,7 @@ func TestConnectCommand(t *testing.T) {
 		"port",
 		"baud",
 	}
-	
+
 	for _, expected := range expectedTexts {
 		if !strings.Contains(out, expected) {
 			t.Errorf("Expected connect help to contain '%s', but it doesn't", expected)
@@ -157,29 +157,29 @@ func TestConfigValidation(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Since we can't actually connect to a port in tests,
 			// we'll just check that validation works correctly
 			// This is more of an integration test with the serial package
-			
+
 			// Parse the flags to extract values
 			cmd := &cobra.Command{Use: "test"}
-			
+
 			// Add the same flags as the root command
 			var testPort string
 			var testBaud, testData, testStop int
 			var testParity string
-			
+
 			cmd.Flags().StringVar(&testPort, "port", "", "port")
 			cmd.Flags().IntVar(&testBaud, "baud", 115200, "baud")
 			cmd.Flags().IntVar(&testData, "data", 8, "data")
 			cmd.Flags().IntVar(&testStop, "stop", 1, "stop")
 			cmd.Flags().StringVar(&testParity, "parity", "none", "parity")
-			
+
 			cmd.ParseFlags(tt.args)
-			
+
 			// Create config based on parsed flags
 			cfg := serial.SerialConfig{
 				Port:     testPort,
@@ -189,14 +189,14 @@ func TestConfigValidation(t *testing.T) {
 				Parity:   testParity,
 				Timeout:  time.Second * 10,
 			}
-			
+
 			// Validate
 			err := cfg.Validate()
-			
+
 			if tt.shouldErr && err == nil {
 				t.Error("Expected validation error but got none")
 			}
-			
+
 			if !tt.shouldErr && err != nil {
 				t.Errorf("Expected no validation error but got: %v", err)
 			}
@@ -218,7 +218,7 @@ func TestIsSerialPort(t *testing.T) {
 		{"Not a serial port", "myconfig", false},
 		{"Random text", "hello", false},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := isSerialPort(tt.input)
@@ -241,7 +241,7 @@ func TestRepeatString(t *testing.T) {
 		{"x", 0, ""},
 		{"", 5, ""},
 	}
-	
+
 	for _, tt := range tests {
 		result := repeatString(tt.str, tt.count)
 		if result != tt.expected {
@@ -255,7 +255,7 @@ func TestPortDescription(t *testing.T) {
 	// Save original GOOS
 	originalGOOS := os.Getenv("GOOS")
 	defer os.Setenv("GOOS", originalGOOS)
-	
+
 	tests := []struct {
 		goos     string
 		port     string
@@ -267,7 +267,7 @@ func TestPortDescription(t *testing.T) {
 		{"darwin", "/dev/cu.usbserial", "USB Serial Device (Callout)"},
 		{"darwin", "/dev/tty.usbserial", "USB Serial Device (TTY)"},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.goos+"-"+tt.port, func(t *testing.T) {
 			// Note: getPortDescription uses runtime.GOOS which we can't easily mock
@@ -285,22 +285,21 @@ func TestCommandStructure(t *testing.T) {
 		configCmd,
 		connectCmd,
 	}
-	
+
 	for _, cmd := range commands {
 		// Check that command has Use field
 		if cmd.Use == "" {
 			t.Errorf("Command %v has empty Use field", cmd)
 		}
-		
+
 		// Check that command has Short description
 		if cmd.Short == "" {
 			t.Errorf("Command %s has empty Short description", cmd.Use)
 		}
-		
+
 		// Check that command has Long description (except subcommands)
 		if cmd != saveCmd && cmd != loadCmd && cmd != deleteCmd && cmd != showCmd && cmd.Long == "" {
 			t.Errorf("Command %s has empty Long description", cmd.Use)
 		}
 	}
 }
-
