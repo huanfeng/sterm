@@ -192,23 +192,33 @@ type TerminalEmulator struct {
 	tabStops       map[int]bool // Custom tab stops
 	utf8Decoder    *UTF8Decoder // UTF-8 decoder for multi-byte characters
 	logger         Logger       // Logger for debug output
+
+	// Scrollback buffer for history
+	scrollbackBuffer [][]Cell // History lines
+	scrollbackSize   int      // Maximum scrollback lines
+	scrollOffset     int      // Current scroll position (0 = bottom/normal)
+	isScrolling      bool     // Whether in scroll mode
 }
 
 // NewTerminalEmulator creates a new terminal emulator
 func NewTerminalEmulator(serialPort serial.SerialPort, historyManager history.HistoryManager, width, height int) *TerminalEmulator {
 	te := &TerminalEmulator{
-		screen:         NewScreen(width, height),
-		altScreen:      NewScreen(width, height),
-		parser:         NewVTParser(),
-		serialPort:     serialPort,
-		historyManager: historyManager,
-		state:          DefaultTerminalState(width, height),
-		savedState:     nil,
-		isRunning:      false,
-		useAltScreen:   false,
-		tabStops:       make(map[int]bool),
-		utf8Decoder:    NewUTF8Decoder(),
-		logger:         nil, // Will be set with SetLogger if needed
+		screen:           NewScreen(width, height),
+		altScreen:        NewScreen(width, height),
+		parser:           NewVTParser(),
+		serialPort:       serialPort,
+		historyManager:   historyManager,
+		state:            DefaultTerminalState(width, height),
+		savedState:       nil,
+		isRunning:        false,
+		useAltScreen:     false,
+		tabStops:         make(map[int]bool),
+		utf8Decoder:      NewUTF8Decoder(),
+		logger:           nil,                      // Will be set with SetLogger if needed
+		scrollbackBuffer: make([][]Cell, 0, 10000), // Initial capacity of 10000 lines
+		scrollbackSize:   10000,                    // Maximum 10000 lines of history
+		scrollOffset:     0,                        // Start at bottom (no scroll)
+		isScrolling:      false,
 	}
 	// Initialize default tab stops every 8 columns
 	for i := 8; i < width; i += 8 {
@@ -1646,6 +1656,19 @@ func (te *TerminalEmulator) scroll(direction string) {
 func (te *TerminalEmulator) scrollUp() {
 	screen := te.GetScreen()
 
+	// Save the top line to scrollback buffer if it's about to be lost
+	if te.state.ScrollTop == 0 && len(screen.Buffer) > 0 {
+		// Copy the top line to scrollback
+		topLine := make([]Cell, len(screen.Buffer[0]))
+		copy(topLine, screen.Buffer[0])
+		te.scrollbackBuffer = append(te.scrollbackBuffer, topLine)
+
+		// Trim scrollback if it exceeds maximum size
+		if len(te.scrollbackBuffer) > te.scrollbackSize {
+			te.scrollbackBuffer = te.scrollbackBuffer[1:]
+		}
+	}
+
 	// Move all lines up within scroll region
 	for y := te.state.ScrollTop; y < te.state.ScrollBottom; y++ {
 		if y+1 < len(screen.Buffer) {
@@ -1678,6 +1701,124 @@ func (te *TerminalEmulator) scrollDown() {
 			screen.Buffer[te.state.ScrollTop][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
+}
+
+// EnterScrollMode enters scrollback viewing mode
+func (te *TerminalEmulator) EnterScrollMode() {
+	te.isScrolling = true
+	te.scrollOffset = 0 // Start at current view
+}
+
+// ExitScrollMode exits scrollback viewing mode
+func (te *TerminalEmulator) ExitScrollMode() {
+	te.isScrolling = false
+	te.scrollOffset = 0
+	te.GetScreen().Dirty = true
+}
+
+// ScrollUp scrolls up n lines in the scrollback buffer
+func (te *TerminalEmulator) ScrollUp(n int) {
+	if !te.isScrolling {
+		te.EnterScrollMode()
+	}
+
+	maxScroll := len(te.scrollbackBuffer)
+	te.scrollOffset += n
+	if te.scrollOffset > maxScroll {
+		te.scrollOffset = maxScroll
+	}
+	te.GetScreen().Dirty = true
+}
+
+// ScrollDown scrolls down n lines in the scrollback buffer
+func (te *TerminalEmulator) ScrollDown(n int) {
+	if !te.isScrolling {
+		return
+	}
+
+	te.scrollOffset -= n
+	if te.scrollOffset <= 0 {
+		te.scrollOffset = 0
+		te.ExitScrollMode()
+	}
+	te.GetScreen().Dirty = true
+}
+
+// ScrollToTop scrolls to the top of the scrollback buffer
+func (te *TerminalEmulator) ScrollToTop() {
+	if !te.isScrolling {
+		te.EnterScrollMode()
+	}
+	te.scrollOffset = len(te.scrollbackBuffer)
+	te.GetScreen().Dirty = true
+}
+
+// ScrollToBottom scrolls to the bottom (exits scroll mode)
+func (te *TerminalEmulator) ScrollToBottom() {
+	te.ExitScrollMode()
+}
+
+// IsScrolling returns whether the terminal is in scroll mode
+func (te *TerminalEmulator) IsScrolling() bool {
+	return te.isScrolling
+}
+
+// GetScrollPosition returns current scroll position info
+func (te *TerminalEmulator) GetScrollPosition() (current, total int) {
+	if !te.isScrolling {
+		return 0, len(te.scrollbackBuffer)
+	}
+	return te.scrollOffset, len(te.scrollbackBuffer)
+}
+
+// GetScrollbackBuffer returns a view of the screen including scrollback
+func (te *TerminalEmulator) GetScrollbackView() [][]Cell {
+	screen := te.GetScreen()
+
+	if !te.isScrolling || te.scrollOffset == 0 {
+		// Return normal screen view
+		return screen.Buffer
+	}
+
+	// Create a view combining scrollback and current screen
+	viewHeight := screen.Height
+	view := make([][]Cell, viewHeight)
+
+	// Calculate starting position in scrollback
+	scrollbackLen := len(te.scrollbackBuffer)
+	startIdx := scrollbackLen - te.scrollOffset
+
+	for i := 0; i < viewHeight; i++ {
+		if startIdx+i < 0 {
+			// Before scrollback starts, show empty lines
+			view[i] = make([]Cell, screen.Width)
+			for j := range view[i] {
+				view[i][j] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			}
+		} else if startIdx+i < scrollbackLen {
+			// Show from scrollback
+			view[i] = te.scrollbackBuffer[startIdx+i]
+		} else {
+			// Show from current screen
+			screenIdx := startIdx + i - scrollbackLen
+			if screenIdx < len(screen.Buffer) {
+				view[i] = screen.Buffer[screenIdx]
+			} else {
+				view[i] = make([]Cell, screen.Width)
+				for j := range view[i] {
+					view[i][j] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+				}
+			}
+		}
+	}
+
+	return view
+}
+
+// ClearScrollback clears the scrollback buffer
+func (te *TerminalEmulator) ClearScrollback() {
+	te.scrollbackBuffer = make([][]Cell, 0, te.scrollbackSize)
+	te.ExitScrollMode()
 }
 
 // setMode sets terminal mode

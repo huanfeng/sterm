@@ -628,6 +628,61 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
+	// Handle scrolling keys
+	switch ev.Key() {
+	case tcell.KeyPgUp:
+		// PageUp - scroll up one page
+		height := app.terminal.GetState().Height
+		app.terminal.ScrollUp(height)
+		app.updateDisplay()
+		return
+	case tcell.KeyPgDn:
+		// PageDown - scroll down one page
+		height := app.terminal.GetState().Height
+		app.terminal.ScrollDown(height)
+		app.updateDisplay()
+		return
+	case tcell.KeyUp:
+		if ev.Modifiers()&tcell.ModShift != 0 {
+			// Shift+Up - scroll up one line
+			app.terminal.ScrollUp(1)
+			app.updateDisplay()
+			return
+		}
+	case tcell.KeyDown:
+		if ev.Modifiers()&tcell.ModShift != 0 {
+			// Shift+Down - scroll down one line
+			app.terminal.ScrollDown(1)
+			app.updateDisplay()
+			return
+		}
+	case tcell.KeyHome:
+		if ev.Modifiers()&tcell.ModCtrl != 0 {
+			// Ctrl+Home - scroll to top
+			app.terminal.ScrollToTop()
+			app.updateDisplay()
+			return
+		}
+	case tcell.KeyEnd:
+		if ev.Modifiers()&tcell.ModCtrl != 0 {
+			// Ctrl+End - scroll to bottom (exit scroll mode)
+			app.terminal.ScrollToBottom()
+			app.updateDisplay()
+			return
+		}
+	}
+
+	// If we're in scroll mode and user types something, exit scroll mode
+	if app.terminal.IsScrolling() {
+		// Any regular input should exit scroll mode
+		if ev.Key() == tcell.KeyRune ||
+			(ev.Key() >= tcell.KeyEnter && ev.Key() <= tcell.KeyEscape) {
+			app.terminal.ExitScrollMode()
+			app.updateDisplay()
+			// Continue to process the key normally
+		}
+	}
+
 	// Check shortcuts first
 	if app.config.EnableShortcuts && app.shortcuts.IsEnabled() {
 		app.logDebug("Processing shortcuts, enabled=%v", app.shortcuts.IsEnabled())
@@ -768,10 +823,18 @@ func (app *Application) updateDisplay() {
 	// Get terminal state
 	state := app.terminal.GetState()
 
+	// Get the appropriate buffer based on scroll mode
+	var buffer [][]terminal.Cell
+	if app.terminal.IsScrolling() {
+		buffer = app.terminal.GetScrollbackView()
+	} else {
+		buffer = screen.Buffer
+	}
+
 	// Render each cell
-	for y := 0; y < screen.Height && y < len(screen.Buffer); y++ {
-		for x := 0; x < screen.Width && x < len(screen.Buffer[y]); x++ {
-			cell := screen.Buffer[y][x]
+	for y := 0; y < screen.Height && y < len(buffer); y++ {
+		for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+			cell := buffer[y][x]
 
 			// Convert terminal colors to tcell colors
 			style := tcell.StyleDefault
@@ -804,10 +867,35 @@ func (app *Application) updateDisplay() {
 		}
 	}
 
-	// Show cursor
-	if state.CursorX >= 0 && state.CursorX < screen.Width &&
-		state.CursorY >= 0 && state.CursorY < screen.Height {
-		app.screen.ShowCursor(state.CursorX, state.CursorY)
+	// Show scroll indicator if in scroll mode
+	if app.terminal.IsScrolling() {
+		current, total := app.terminal.GetScrollPosition()
+		indicator := fmt.Sprintf(" [SCROLL: %d/%d lines - PgUp/PgDn to navigate, ESC to exit] ",
+			current, total)
+
+		// Display at the bottom of the screen
+		screenWidth, screenHeight := app.screen.Size()
+		indicatorY := screenHeight - 1
+		indicatorX := (screenWidth - len(indicator)) / 2
+		if indicatorX < 0 {
+			indicatorX = 0
+		}
+
+		// Draw indicator with inverted colors
+		style := tcell.StyleDefault.Reverse(true)
+		for i, ch := range indicator {
+			if indicatorX+i < screenWidth {
+				app.screen.SetContent(indicatorX+i, indicatorY, ch, nil, style)
+			}
+		}
+
+		// Don't show cursor in scroll mode
+	} else {
+		// Show cursor only when not scrolling
+		if state.CursorX >= 0 && state.CursorX < screen.Width &&
+			state.CursorY >= 0 && state.CursorY < screen.Height {
+			app.screen.ShowCursor(state.CursorX, state.CursorY)
+		}
 	}
 
 	// Show the screen
