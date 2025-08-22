@@ -198,6 +198,9 @@ type TerminalEmulator struct {
 	scrollbackSize   int      // Maximum scrollback lines
 	scrollOffset     int      // Current scroll position (0 = bottom/normal)
 	isScrolling      bool     // Whether in scroll mode
+	
+	// Mouse mode change callback
+	onMouseModeChange func(mode MouseMode)
 }
 
 // NewTerminalEmulator creates a new terminal emulator
@@ -233,6 +236,11 @@ func (te *TerminalEmulator) SetLogger(logger Logger) {
 	if te.utf8Decoder != nil {
 		te.utf8Decoder.logger = logger
 	}
+}
+
+// SetMouseModeChangeCallback sets a callback for mouse mode changes
+func (te *TerminalEmulator) SetMouseModeChangeCallback(callback func(mode MouseMode)) {
+	te.onMouseModeChange = callback
 }
 
 // Screen represents the terminal screen buffer
@@ -1832,18 +1840,30 @@ func (te *TerminalEmulator) setMode(mode string) {
 		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeX10
 		te.logDebug("Mouse mode changed: %v -> %v (X10)", oldMode, te.state.MouseMode)
+		if te.onMouseModeChange != nil {
+			te.onMouseModeChange(MouseModeX10)
+		}
 	case "mouse_btn_event":
 		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeBtnEvent
 		te.logDebug("Mouse mode changed: %v -> %v (Button Event)", oldMode, te.state.MouseMode)
+		if te.onMouseModeChange != nil {
+			te.onMouseModeChange(MouseModeBtnEvent)
+		}
 	case "mouse_any_event":
 		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeAnyEvent
 		te.logDebug("Mouse mode changed: %v -> %v (Any Event)", oldMode, te.state.MouseMode)
+		if te.onMouseModeChange != nil {
+			te.onMouseModeChange(MouseModeAnyEvent)
+		}
 	case "mouse_off":
 		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeOff
 		te.logDebug("Mouse mode changed: %v -> %v (Off)", oldMode, te.state.MouseMode)
+		if te.onMouseModeChange != nil {
+			te.onMouseModeChange(MouseModeOff)
+		}
 	}
 }
 

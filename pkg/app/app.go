@@ -208,11 +208,9 @@ func (app *Application) initializeComponents() error {
 	screen.SetStyle(defaultStyle)
 	screen.Clear()
 
-	// Enable mouse support if configured
-	if app.config.EnableMouse {
-		screen.EnableMouse()
-		// Note: Mouse support enabled in tcell screen
-	}
+	// Don't enable mouse by default to preserve text selection
+	// Mouse will only be enabled when terminal explicitly requests it
+	// Users can use Ctrl+PageUp/Down for scrolling instead
 
 	app.screen = screen
 
@@ -222,14 +220,14 @@ func (app *Application) initializeComponents() error {
 	// Otherwise use the actual terminal size
 	if app.config.TerminalWidth <= 0 || app.config.TerminalHeight <= 0 {
 		app.config.TerminalWidth = width
-		app.config.TerminalHeight = height
+		app.config.TerminalHeight = height - 1 // Reserve 1 line for status bar
 	} else {
 		// Use configured size if explicitly set
 		width = app.config.TerminalWidth
 		height = app.config.TerminalHeight
 	}
 
-	// Create terminal emulator
+	// Create terminal emulator (with reduced height for status bar)
 	app.terminal = terminal.NewTerminalEmulator(
 		nil, // Will set input/output later
 		nil,
@@ -239,6 +237,23 @@ func (app *Application) initializeComponents() error {
 
 	// Set logger for terminal debugging
 	app.terminal.SetLogger(app)
+	
+	// Set mouse mode change callback to dynamically enable/disable mouse
+	app.terminal.SetMouseModeChangeCallback(func(mode terminal.MouseMode) {
+		if mode == terminal.MouseModeOff {
+			// Disable tcell mouse to allow native text selection
+			if app.screen != nil {
+				app.screen.DisableMouse()
+				app.logDebug("Mouse disabled in tcell for native text selection")
+			}
+		} else {
+			// Enable tcell mouse for terminal mouse events
+			if app.screen != nil && app.config.EnableMouse {
+				app.screen.EnableMouse()
+				app.logDebug("Mouse enabled in tcell for mode: %v", mode)
+			}
+		}
+	})
 
 	// Create input processor (single instance to maintain state)
 	app.inputProcessor = terminal.NewInputProcessor(app.terminal)
@@ -326,6 +341,8 @@ func (app *Application) Start() error {
 	// Send initial terminal size to remote device if configured
 	if app.config.SendWindowSizeOnConnect {
 		width, height := app.screen.Size()
+		// Reserve 1 line for status bar
+		terminalHeight := height - 1
 		if app.serialPort != nil && app.serialPort.IsOpen() {
 			// Send terminal type response based on configuration
 			if app.config.TerminalType == "vt100" {
@@ -337,15 +354,15 @@ func (app *Application) Start() error {
 			// Send window size using stty-compatible format
 			// Some systems expect: ESC[8;<height>;<width>t
 			// Others use environment variables or stty
-			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", terminalHeight, width)
 			app.serialPort.Write([]byte(sizeSeq))
 
 			// Also try sending as environment variable format
 			// This helps with programs that use LINES/COLUMNS
-			envSeq := fmt.Sprintf("\x1b]0;LINES=%d;COLUMNS=%d\x07", height, width)
+			envSeq := fmt.Sprintf("\x1b]0;LINES=%d;COLUMNS=%d\x07", terminalHeight, width)
 			app.serialPort.Write([]byte(envSeq))
 
-			app.logDebug("Sent initial terminal size %dx%d to remote", width, height)
+			app.logDebug("Sent initial terminal size %dx%d to remote", width, terminalHeight)
 		}
 	}
 
@@ -628,20 +645,31 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
-	// Handle scrolling keys
+	// Handle scrolling keys with Ctrl modifier to avoid conflicts with applications
 	switch ev.Key() {
+	case tcell.KeyCtrlS:
+		// Ctrl+S - Enter scroll mode (easy shortcut)
+		if !app.terminal.IsScrolling() {
+			app.terminal.EnterScrollMode()
+			app.updateDisplay()
+		}
+		return
 	case tcell.KeyPgUp:
-		// PageUp - scroll up one page
-		height := app.terminal.GetState().Height
-		app.terminal.ScrollUp(height)
-		app.updateDisplay()
-		return
+		if ev.Modifiers()&tcell.ModCtrl != 0 {
+			// Ctrl+PageUp - scroll up one page
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollUp(height)
+			app.updateDisplay()
+			return
+		}
 	case tcell.KeyPgDn:
-		// PageDown - scroll down one page
-		height := app.terminal.GetState().Height
-		app.terminal.ScrollDown(height)
-		app.updateDisplay()
-		return
+		if ev.Modifiers()&tcell.ModCtrl != 0 {
+			// Ctrl+PageDown - scroll down one page
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollDown(height)
+			app.updateDisplay()
+			return
+		}
 	case tcell.KeyUp:
 		if ev.Modifiers()&tcell.ModShift != 0 {
 			// Shift+Up - scroll up one line
@@ -672,15 +700,85 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		}
 	}
 
-	// If we're in scroll mode and user types something, exit scroll mode
+	// If we're in scroll mode, handle scroll-specific keys
 	if app.terminal.IsScrolling() {
-		// Any regular input should exit scroll mode
-		if ev.Key() == tcell.KeyRune ||
-			(ev.Key() >= tcell.KeyEnter && ev.Key() <= tcell.KeyEscape) {
-			app.terminal.ExitScrollMode()
-			app.updateDisplay()
-			// Continue to process the key normally
+		handled := false
+		switch ev.Key() {
+		case tcell.KeyEscape, tcell.KeyRune:
+			// ESC or 'q' exits scroll mode
+			if ev.Key() == tcell.KeyEscape || ev.Rune() == 'q' || ev.Rune() == 'Q' {
+				app.terminal.ExitScrollMode()
+				app.updateDisplay()
+				return
+			}
+			// Vi-style navigation in scroll mode
+			switch ev.Rune() {
+			case 'j', 'J': // Down
+				app.terminal.ScrollDown(1)
+				handled = true
+			case 'k', 'K': // Up
+				app.terminal.ScrollUp(1)
+				handled = true
+			case 'h', 'H': // Left (not used in vertical scroll)
+				handled = true
+			case 'l', 'L': // Right (not used in vertical scroll)
+				handled = true
+			case 'g', 'G': // Top/Bottom
+				if ev.Modifiers()&tcell.ModShift != 0 { // G - go to bottom
+					app.terminal.ScrollToBottom()
+				} else { // g - go to top
+					app.terminal.ScrollToTop()
+				}
+				handled = true
+			case 'd', 'D': // Half page down
+				height := app.terminal.GetState().Height
+				app.terminal.ScrollDown(height / 2)
+				handled = true
+			case 'u', 'U': // Half page up
+				height := app.terminal.GetState().Height
+				app.terminal.ScrollUp(height / 2)
+				handled = true
+			case 'f', 'F': // Page down (forward)
+				height := app.terminal.GetState().Height
+				app.terminal.ScrollDown(height)
+				handled = true
+			case 'b', 'B': // Page up (backward)
+				height := app.terminal.GetState().Height
+				app.terminal.ScrollUp(height)
+				handled = true
+			}
+		case tcell.KeyUp:
+			app.terminal.ScrollUp(1)
+			handled = true
+		case tcell.KeyDown:
+			app.terminal.ScrollDown(1)
+			handled = true
+		case tcell.KeyLeft, tcell.KeyRight:
+			// Ignore horizontal movement in vertical scroll
+			handled = true
+		case tcell.KeyPgUp:
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollUp(height)
+			handled = true
+		case tcell.KeyPgDn:
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollDown(height)
+			handled = true
+		case tcell.KeyHome:
+			app.terminal.ScrollToTop()
+			handled = true
+		case tcell.KeyEnd:
+			app.terminal.ScrollToBottom()
+			handled = true
 		}
+		
+		if handled {
+			app.updateDisplay()
+			return
+		}
+		
+		// Other keys don't exit scroll mode, just ignore them
+		return
 	}
 
 	// Check shortcuts first
@@ -719,20 +817,20 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 
 // handleMouseEvent handles mouse events
 func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
-	// Debug log mouse event details (commented out for performance)
-	// x, y := ev.Position()
-	// buttons := ev.Buttons()
-	// modifiers := ev.Modifiers()
-	// app.logDebug("Mouse event: pos=(%d,%d), buttons=%d, mods=%v", x, y, buttons, modifiers)
-
-	if !app.config.EnableMouse {
-		// app.logDebug("Mouse events disabled in config")
+	// Only process mouse events if mouse is enabled (terminal requested it)
+	mouseMode := app.terminal.GetState().MouseMode
+	
+	// Only process mouse events when terminal has requested mouse mode
+	if mouseMode == terminal.MouseModeOff {
+		// Mouse mode is off, don't process any mouse events
+		// This preserves text selection when tcell mouse is disabled
 		return
 	}
 
-	// Check current mouse mode (commented out for performance)
-	// mouseMode := app.terminal.GetState().MouseMode
-	// app.logDebug("Current mouse mode: %v", mouseMode)
+	if !app.config.EnableMouse {
+		// Mouse support disabled in config
+		return
+	}
 
 	// Use shared input processor to maintain mouse button state
 	data := app.inputProcessor.ProcessMouseEvent(ev)
@@ -766,19 +864,22 @@ func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
 // handleResize handles terminal resize events
 func (app *Application) handleResize() {
 	width, height := app.screen.Size()
-	app.terminal.Resize(width, height)
+	// Reserve 1 line for status bar
+	terminalHeight := height - 1
+	app.terminal.Resize(width, terminalHeight)
 
 	// Only send terminal size update if explicitly configured
 	// Most serial devices don't support this and it causes garbage output
 	if app.config.SendWindowSizeOnResize {
 		if app.serialPort != nil && app.serialPort.IsOpen() && !app.isPaused {
-			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+			// Send the actual terminal size (without status bar)
+			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", terminalHeight, width)
 			app.serialPort.Write([]byte(sizeSeq))
 
-			app.logDebug("Window resized to %dx%d, sent size update to remote", width, height)
+			app.logDebug("Window resized to %dx%d, sent size update to remote", width, terminalHeight)
 		}
 	} else {
-		app.logDebug("Window resized to %dx%d (not sending to remote)", width, height)
+		app.logDebug("Window resized to %dx%d (not sending to remote)", width, terminalHeight)
 	}
 
 	app.screen.Clear()
@@ -831,8 +932,11 @@ func (app *Application) updateDisplay() {
 		buffer = screen.Buffer
 	}
 
-	// Render each cell
-	for y := 0; y < screen.Height && y < len(buffer); y++ {
+	// Render each cell (leave room for status bar at bottom)
+	screenWidth, screenHeight := app.screen.Size()
+	contentHeight := screenHeight - 1 // Reserve bottom line for status bar
+	
+	for y := 0; y < contentHeight && y < len(buffer); y++ {
 		for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
 			cell := buffer[y][x]
 
@@ -867,33 +971,87 @@ func (app *Application) updateDisplay() {
 		}
 	}
 
-	// Show scroll indicator if in scroll mode
+	// Always show status bar at bottom
+	statusY := screenHeight - 1
+	
+	// Prepare status bar content
+	var statusLeft, statusCenter, statusRight string
+	
+	// Left: Connection info
+	if app.serialPort != nil && app.serialPort.IsOpen() {
+		cfg := app.config.SerialConfig
+		statusLeft = fmt.Sprintf(" %s %d ", cfg.Port, cfg.BaudRate)
+	} else {
+		statusLeft = " Disconnected "
+	}
+	
+	// Center: Mode indicator
 	if app.terminal.IsScrolling() {
 		current, total := app.terminal.GetScrollPosition()
-		indicator := fmt.Sprintf(" [SCROLL: %d/%d lines - PgUp/PgDn to navigate, ESC to exit] ",
-			current, total)
-
-		// Display at the bottom of the screen
-		screenWidth, screenHeight := app.screen.Size()
-		indicatorY := screenHeight - 1
-		indicatorX := (screenWidth - len(indicator)) / 2
-		if indicatorX < 0 {
-			indicatorX = 0
+		statusCenter = fmt.Sprintf(" SCROLL: %d/%d [Ctrl+S] [q:Exit] ", current, total)
+	} else if app.isPaused {
+		statusCenter = " PAUSED [F8] "
+	} else {
+		// Show hint for scroll mode
+		statusCenter = " [Ctrl+S: Scroll] [F1: Help] "
+	}
+	
+	// Right: Session info
+	if app.session != nil {
+		statusRight = fmt.Sprintf(" TX:%d RX:%d ", 
+			app.session.BytesSent, 
+			app.session.BytesRecv)
+	}
+	
+	// Draw status bar with different style
+	statusStyle := tcell.StyleDefault.
+		Background(tcell.ColorDarkBlue).
+		Foreground(tcell.ColorWhite)
+	
+	// Fill entire bottom line
+	for x := 0; x < screenWidth; x++ {
+		app.screen.SetContent(x, statusY, ' ', nil, statusStyle)
+	}
+	
+	// Draw left text
+	for i, ch := range statusLeft {
+		if i < screenWidth {
+			app.screen.SetContent(i, statusY, ch, nil, statusStyle.Bold(true))
 		}
-
-		// Draw indicator with inverted colors
-		style := tcell.StyleDefault.Reverse(true)
-		for i, ch := range indicator {
-			if indicatorX+i < screenWidth {
-				app.screen.SetContent(indicatorX+i, indicatorY, ch, nil, style)
+	}
+	
+	// Draw center text
+	centerX := (screenWidth - len(statusCenter)) / 2
+	if centerX < 0 {
+		centerX = 0
+	}
+	for i, ch := range statusCenter {
+		if centerX+i < screenWidth {
+			if app.terminal.IsScrolling() {
+				// Highlight scroll mode
+				app.screen.SetContent(centerX+i, statusY, ch, nil, 
+					statusStyle.Background(tcell.ColorDarkRed).Bold(true))
+			} else {
+				app.screen.SetContent(centerX+i, statusY, ch, nil, statusStyle)
 			}
 		}
-
-		// Don't show cursor in scroll mode
-	} else {
-		// Show cursor only when not scrolling
+	}
+	
+	// Draw right text
+	rightX := screenWidth - len(statusRight)
+	if rightX < 0 {
+		rightX = 0
+	}
+	for i, ch := range statusRight {
+		if rightX+i < screenWidth {
+			app.screen.SetContent(rightX+i, statusY, ch, nil, statusStyle)
+		}
+	}
+	
+	// Show cursor (adjusted for status bar)
+	if !app.terminal.IsScrolling() {
 		if state.CursorX >= 0 && state.CursorX < screen.Width &&
-			state.CursorY >= 0 && state.CursorY < screen.Height {
+			state.CursorY >= 0 && state.CursorY < contentHeight {
 			app.screen.ShowCursor(state.CursorX, state.CursorY)
 		}
 	}
