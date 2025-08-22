@@ -173,22 +173,30 @@ func (m MouseMode) String() string {
 	return "unknown"
 }
 
+// Logger interface for debug logging
+type Logger interface {
+	Debugf(format string, args ...interface{})
+}
+
 // TerminalEmulator implements the Terminal interface
 type TerminalEmulator struct {
 	screen         *Screen
-	altScreen      *Screen  // Alternative screen buffer for full-screen apps
+	altScreen      *Screen // Alternative screen buffer for full-screen apps
 	parser         *VTParser
 	serialPort     serial.SerialPort
 	historyManager history.HistoryManager
 	state          TerminalState
-	savedState     *TerminalState  // Saved cursor state for DECSC/DECRC
+	savedState     *TerminalState // Saved cursor state for DECSC/DECRC
 	isRunning      bool
-	useAltScreen   bool  // Whether using alternative screen
+	useAltScreen   bool         // Whether using alternative screen
+	tabStops       map[int]bool // Custom tab stops
+	utf8Decoder    *UTF8Decoder // UTF-8 decoder for multi-byte characters
+	logger         Logger       // Logger for debug output
 }
 
 // NewTerminalEmulator creates a new terminal emulator
 func NewTerminalEmulator(serialPort serial.SerialPort, historyManager history.HistoryManager, width, height int) *TerminalEmulator {
-	return &TerminalEmulator{
+	te := &TerminalEmulator{
 		screen:         NewScreen(width, height),
 		altScreen:      NewScreen(width, height),
 		parser:         NewVTParser(),
@@ -198,6 +206,22 @@ func NewTerminalEmulator(serialPort serial.SerialPort, historyManager history.Hi
 		savedState:     nil,
 		isRunning:      false,
 		useAltScreen:   false,
+		tabStops:       make(map[int]bool),
+		utf8Decoder:    NewUTF8Decoder(),
+		logger:         nil, // Will be set with SetLogger if needed
+	}
+	// Initialize default tab stops every 8 columns
+	for i := 8; i < width; i += 8 {
+		te.tabStops[i] = true
+	}
+	return te
+}
+
+// SetLogger sets the logger for debug output
+func (te *TerminalEmulator) SetLogger(logger Logger) {
+	te.logger = logger
+	if te.utf8Decoder != nil {
+		te.utf8Decoder.logger = logger
 	}
 }
 
@@ -233,6 +257,134 @@ func NewScreen(width, height int) *Screen {
 		Height: height,
 		Buffer: buffer,
 		Dirty:  true,
+	}
+}
+
+// UTF8Decoder handles UTF-8 character decoding
+type UTF8Decoder struct {
+	bytes    []byte
+	expected int
+	logger   Logger
+}
+
+// NewUTF8Decoder creates a new UTF-8 decoder
+func NewUTF8Decoder() *UTF8Decoder {
+	return &UTF8Decoder{
+		bytes:    make([]byte, 0, 4),
+		expected: 0,
+	}
+}
+
+// Decode processes a byte and returns a rune if complete, or 0 if incomplete
+func (d *UTF8Decoder) Decode(b byte) (rune, bool) {
+	// If we're expecting continuation bytes
+	if d.expected > 0 {
+		// Check if this is a valid continuation byte
+		if b >= 0x80 && b < 0xC0 {
+			// Valid continuation byte
+			d.bytes = append(d.bytes, b)
+			d.expected--
+
+			if d.expected == 0 {
+				// Complete character
+				// Log before decoding - make a copy to ensure we see the actual bytes
+				bytesCopy := make([]byte, len(d.bytes))
+				copy(bytesCopy, d.bytes)
+				if d.logger != nil {
+					d.logger.Debugf("UTF8Decoder: Decoding complete sequence: %X (len=%d)",
+						bytesCopy, len(bytesCopy))
+				}
+				r, size := decodeUTF8(bytesCopy) // Use the copy to avoid any modification issues
+				// Debug: log what we're decoding
+				if size > 0 {
+					// Successfully decoded
+					if d.logger != nil {
+						d.logger.Debugf("UTF8Decoder: Decoded to U+%04X from bytes %X (decimal: %d)", r, bytesCopy, r)
+					}
+					result := r
+					d.Reset()
+					return result, true
+				} else {
+					// Failed to decode
+					d.Reset()
+					return '�', true
+				}
+			}
+			// Still need more bytes
+			return 0, false
+		} else {
+			// Invalid continuation byte - either new start or ASCII
+			// This byte is NOT a valid continuation
+			// Check if it's ASCII - if so, we need to output replacement for incomplete sequence
+			if b < 0x80 {
+				// ASCII byte interrupting UTF-8 sequence
+				d.Reset()
+				// Process ASCII byte normally
+				return rune(b), true
+			}
+			// Reset and try to process this byte as new character
+			d.Reset()
+			// Fall through to process as new character
+		}
+	}
+
+	// Starting a new character
+	if b < 0x80 { // ASCII
+		return rune(b), true
+	} else if b < 0xC0 { // Orphaned continuation byte
+		// This shouldn't happen in valid UTF-8
+		// IMPORTANT: Never treat a continuation byte as a character!
+		// It should always return replacement character
+		return '�', true
+	} else if b < 0xE0 { // 2-byte sequence
+		d.bytes = append(d.bytes[:0], b)
+		d.expected = 1
+		return 0, false
+	} else if b < 0xF0 { // 3-byte sequence
+		d.bytes = append(d.bytes[:0], b)
+		d.expected = 2
+		return 0, false
+	} else if b < 0xF8 { // 4-byte sequence
+		d.bytes = append(d.bytes[:0], b)
+		d.expected = 3
+		return 0, false
+	} else { // Invalid UTF-8
+		return '�', true
+	}
+}
+
+// Reset resets the decoder state
+func (d *UTF8Decoder) Reset() {
+	d.bytes = d.bytes[:0]
+	d.expected = 0
+}
+
+// decodeUTF8 decodes a complete UTF-8 sequence
+func decodeUTF8(bytes []byte) (rune, int) {
+	if len(bytes) == 0 {
+		return 0, 0
+	}
+
+	switch len(bytes) {
+	case 1:
+		return rune(bytes[0]), 1
+	case 2:
+		r := rune((bytes[0]&0x1F)<<6 | (bytes[1] & 0x3F))
+		return r, 2
+	case 3:
+		// Debug the calculation
+		b0 := uint32(bytes[0]) & 0x0F
+		b1 := uint32(bytes[1]) & 0x3F
+		b2 := uint32(bytes[2]) & 0x3F
+		result := (b0 << 12) | (b1 << 6) | b2
+		r := rune(result)
+		// For E4 B8 AD: b0=4, b1=38, b2=2D -> 4000 + E00 + 2D = 4E2D (中)
+		return r, 3
+	case 4:
+		r := rune((bytes[0]&0x07)<<18 | (bytes[1]&0x3F)<<12 | (bytes[2]&0x3F)<<6 | (bytes[3] & 0x3F))
+		return r, 4
+	default:
+		return 0, 0
 	}
 }
 
@@ -274,12 +426,12 @@ func (vt *VTParser) Reset() {
 }
 
 // ParseByte processes a single byte through the VT parser state machine
-func (vt *VTParser) ParseByte(b byte, screen *Screen, state *TerminalState) []Action {
+func (vt *VTParser) ParseByte(b byte, screen *Screen, state *TerminalState, utf8Decoder *UTF8Decoder) []Action {
 	var actions []Action
 
 	switch vt.State {
 	case StateGround:
-		actions = vt.handleGround(b, screen, state)
+		actions = vt.handleGround(b, screen, state, utf8Decoder)
 	case StateEscape:
 		actions = vt.handleEscape(b, screen, state)
 	case StateCSI:
@@ -322,13 +474,17 @@ const (
 	ActionRestoreCursor
 	ActionSwitchAltScreen
 	ActionSendResponse
+	ActionSetTabStop
+	ActionClearTabStop
 )
 
 // handleGround processes characters in ground state
-func (vt *VTParser) handleGround(b byte, screen *Screen, state *TerminalState) []Action {
+func (vt *VTParser) handleGround(b byte, screen *Screen, state *TerminalState, utf8Decoder *UTF8Decoder) []Action {
 	switch b {
 	case 0x1B: // ESC
 		vt.State = StateEscape
+		// Don't reset UTF-8 decoder here - let it continue buffering
+		// utf8Decoder.Reset()
 		return nil
 	case 0x07: // BEL
 		return []Action{{Type: ActionBell}}
@@ -344,7 +500,8 @@ func (vt *VTParser) handleGround(b byte, screen *Screen, state *TerminalState) [
 		if b >= 0x20 && b <= 0x7E { // Printable ASCII
 			return []Action{{Type: ActionPrint, Data: rune(b)}}
 		}
-		// Ignore other control characters
+		// UTF-8 and other bytes are handled in ProcessOutput
+		// Ignore control characters below 0x20
 		return nil
 	}
 }
@@ -377,8 +534,7 @@ func (vt *VTParser) handleEscape(b byte, screen *Screen, state *TerminalState) [
 		return []Action{{Type: ActionNewline}, {Type: ActionCarriageReturn}}
 	case 'H': // HTS - Horizontal Tab Set
 		vt.Reset()
-		// TODO: Implement tab stops
-		return nil
+		return []Action{{Type: ActionSetTabStop}}
 	case '7': // DECSC - Save Cursor
 		vt.Reset()
 		return []Action{{Type: ActionSaveCursor}}
@@ -438,6 +594,23 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 	case 'D': // CUB - Cursor Backward
 		count := vt.getParam(0, 1)
 		return []Action{{Type: ActionMoveCursor, Data: CursorMove{Direction: "left", Count: count}}}
+	case 'E': // CNL - Cursor Next Line
+		count := vt.getParam(0, 1)
+		actions := []Action{}
+		for i := 0; i < count; i++ {
+			actions = append(actions, Action{Type: ActionNewline})
+		}
+		actions = append(actions, Action{Type: ActionCarriageReturn})
+		return actions
+	case 'F': // CPL - Cursor Previous Line
+		count := vt.getParam(0, 1)
+		return []Action{
+			{Type: ActionMoveCursor, Data: CursorMove{Direction: "up", Count: count}},
+			{Type: ActionCarriageReturn},
+		}
+	case 'G': // CHA - Cursor Horizontal Absolute
+		col := vt.getParam(0, 1) - 1
+		return []Action{{Type: ActionMoveCursor, Data: CursorMove{Direction: "horizontal", Col: col}}}
 	case 'H', 'f': // CUP - Cursor Position
 		row := vt.getParam(0, 1) - 1
 		col := vt.getParam(1, 1) - 1
@@ -468,6 +641,9 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 	case '@': // ICH - Insert Character
 		count := vt.getParam(0, 1)
 		return []Action{{Type: ActionInsertChar, Data: count}}
+	case 'g': // TBC - Tab Clear
+		mode := vt.getParam(0, 0)
+		return []Action{{Type: ActionClearTabStop, Data: mode}}
 	case 'n': // DSR - Device Status Report
 		mode := vt.getParam(0, 0)
 		switch mode {
@@ -481,6 +657,18 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 			col := state.CursorX + 1
 			response := fmt.Sprintf("\x1b[%d;%dR", row, col)
 			return []Action{{Type: ActionSendResponse, Data: response}}
+		case 15: // Report printer status
+			// Report no printer
+			response := "\x1b[?13n"
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		case 25: // Report UDK status
+			// Report UDKs are locked
+			response := "\x1b[?21n"
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		case 26: // Report keyboard status
+			// Report North American keyboard
+			response := "\x1b[?27;1n"
+			return []Action{{Type: ActionSendResponse, Data: response}}
 		}
 		return nil
 	case 't': // Window manipulation
@@ -488,9 +676,10 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 		switch operation {
 		case 8: // Resize text area (from remote)
 			// ESC[8;<height>;<width>t
-			// This is already handled in app.go when we send it
+			// We receive this but don't need to process it
 			return nil
 		case 14: // Report text area size in pixels (not supported)
+			// Just return nil to avoid displaying garbage
 			return nil
 		case 18: // Report text area size in characters
 			// Response: ESC[8;<height>;<width>t
@@ -500,12 +689,29 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 			// Response: ESC[9;<height>;<width>t
 			response := fmt.Sprintf("\x1b[9;%d;%dt", state.Height, state.Width)
 			return []Action{{Type: ActionSendResponse, Data: response}}
+		default:
+			// Ignore unknown window manipulation sequences
+			// This prevents garbage output when receiving partial sequences
+			return nil
 		}
-		return nil
 	case 'c': // DA - Device Attributes
-		// Send VT100 response
-		response := "\x1b[?1;2c" // VT100 with AVO
-		return []Action{{Type: ActionSendResponse, Data: response}}
+		// Send appropriate response based on query type
+		if len(vt.Intermediate) > 0 && vt.Intermediate[0] == '>' {
+			// Secondary DA (ESC[>c)
+			// Report as VT220: ESC[>1;10;0c
+			response := "\x1b[>1;10;0c"
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		} else if len(vt.Intermediate) > 0 && vt.Intermediate[0] == '?' {
+			// Primary DA with '?' (ESC[?c)
+			// Same as without '?'
+			response := "\x1b[?62;1;2;6;7;8;9c" // VT220 with various options
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		} else {
+			// Primary DA (ESC[c or ESC[0c)
+			// Report as VT220 compatible
+			response := "\x1b[?62;1;2;6;7;8;9c"
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		}
 	default:
 		return nil
 	}
@@ -620,13 +826,13 @@ func (vt *VTParser) sgrParamToAction(param int) *Action {
 // handleSetMode handles mode setting sequences
 func (vt *VTParser) handleSetMode(set bool) []Action {
 	var actions []Action
-	
+
 	// Check if this is a private mode (starts with '?')
 	isPrivate := len(vt.Intermediate) > 0 && vt.Intermediate[0] == '?'
 
 	for _, param := range vt.Params {
 		var mode string
-		
+
 		if isPrivate {
 			// Private modes (DEC modes)
 			switch param {
@@ -889,8 +1095,23 @@ func (tr *TerminalRenderer) Render() error {
 	for y := 0; y < screen.Height; y++ {
 		for x := 0; x < screen.Width; x++ {
 			cell := screen.Buffer[y][x]
+
+			// Skip continuation cells (they're part of the previous wide character)
+			if cell.Char == 0 && x > 0 {
+				// This is a continuation cell for a wide character
+				continue
+			}
+
 			style := tr.attributesToStyle(cell.Attributes)
-			tr.screen.SetContent(x, y, cell.Char, nil, style)
+
+			// Check if this is a wide character
+			if runeWidth(cell.Char) == 2 {
+				// For wide characters, tcell handles the rendering across two cells
+				tr.screen.SetContent(x, y, cell.Char, nil, style)
+			} else {
+				// Normal character
+				tr.screen.SetContent(x, y, cell.Char, nil, style)
+			}
 		}
 	}
 
@@ -1079,8 +1300,19 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 		te.historyManager.Write(output, history.DirectionInput)
 	}
 
-	// Process each byte through the VT parser
-	for i, b := range output {
+	// Debug log the raw bytes received and decoder state
+	if len(output) > 0 {
+		hexBytes := fmt.Sprintf("%X", output)
+		te.logDebug("UTF-8 Raw bytes received (%d bytes): %s", len(output), hexBytes)
+		te.logDebug("Decoder state at start: buffered=%X, expected=%d, decoder_ptr=%p",
+			te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
+	}
+
+	// Process the output
+	i := 0
+	for i < len(output) {
+		b := output[i]
+
 		// Debug logging for escape sequences
 		if te.parser.State != StateGround {
 			// In escape sequence processing
@@ -1090,23 +1322,67 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 				te.logDebug("ESC seq byte %d: 0x%02X state=%d", i, b, te.parser.State)
 			}
 		}
-		
-		actions := te.parser.ParseByte(b, te.GetScreen(), &te.state)
+
+		// Special debug for backspace sequences
+		if b == 0x08 {
+			te.logDebug("Processing BACKSPACE (0x08) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
+		} else if b == 0x20 && i > 0 && output[i-1] == 0x08 {
+			te.logDebug("Processing SPACE after BACKSPACE at byte[%d]", i)
+		} else if b == 0x7F {
+			te.logDebug("Processing DEL (0x7F) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
+		}
+
+		// Debug what byte we're processing - only log non-ASCII for less verbosity
+		if b >= 0x80 || b < 0x20 {
+			te.logDebug("Processing byte[%d]: 0x%02X, parser state=%d, decoder: buffered=%X, expected=%d",
+				i, b, te.parser.State, te.utf8Decoder.bytes, te.utf8Decoder.expected)
+		}
+
+		// If in ground state and this could be UTF-8, use custom decoder
+		if te.parser.State == StateGround && b >= 0x80 {
+			// Always use custom decoder for UTF-8 to handle partial sequences
+			prevBuffered := make([]byte, len(te.utf8Decoder.bytes))
+			copy(prevBuffered, te.utf8Decoder.bytes)
+			prevExpected := te.utf8Decoder.expected
+
+			if r, complete := te.utf8Decoder.Decode(b); complete && r != 0 {
+				te.logDebug("UTF-8 decoded: rune=U+%04X '%c' from byte 0x%02X (was buffered: %X, expected: %d)", r, r, b, prevBuffered, prevExpected)
+				te.executeAction(Action{Type: ActionPrint, Data: r})
+			} else if !complete {
+				te.logDebug("UTF-8 partial byte 0x%02X buffered, expected=%d, buffered=%X", b, te.utf8Decoder.expected, te.utf8Decoder.bytes)
+			} else {
+				te.logDebug("UTF-8 decode failed for byte 0x%02X", b)
+			}
+			i++
+			continue
+		}
+
+		// Process through VT parser for everything else
+		actions := te.parser.ParseByte(b, te.GetScreen(), &te.state, te.utf8Decoder)
 
 		// Execute actions
 		for _, action := range actions {
 			te.logDebug("Executing action: %v", action.Type)
 			te.executeAction(action)
 		}
+
+		i++
+	}
+
+	// Log decoder state at end
+	if len(output) > 0 && te.utf8Decoder.expected > 0 {
+		te.logDebug("Decoder state at end: buffered=%X, expected=%d, decoder_ptr=%p",
+			te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
 	}
 
 	return nil
 }
 
-// logDebug logs debug messages (placeholder - would be connected to actual logger)
+// logDebug logs debug messages to the configured logger
 func (te *TerminalEmulator) logDebug(format string, args ...interface{}) {
-	// This would be connected to the actual debug logger
-	// For now, it's a no-op to avoid performance impact
+	if te.logger != nil {
+		te.logger.Debugf(format, args...)
+	}
 }
 
 // executeAction executes a terminal action
@@ -1135,7 +1411,9 @@ func (te *TerminalEmulator) executeAction(action Action) {
 	case ActionCarriageReturn:
 		te.carriageReturn()
 	case ActionBackspace:
+		te.logDebug("Executing backspace action at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
 		te.backspace()
+		te.logDebug("After backspace, cursor at (%d, %d)", te.state.CursorX, te.state.CursorY)
 	case ActionDeleteChar:
 		te.deleteChar(action.Data.(int))
 	case ActionInsertChar:
@@ -1154,12 +1432,84 @@ func (te *TerminalEmulator) executeAction(action Action) {
 			response := action.Data.(string)
 			te.serialPort.Write([]byte(response))
 		}
+	case ActionSetTabStop:
+		te.setTabStop()
+	case ActionClearTabStop:
+		te.clearTabStop(action.Data.(int))
 	}
+}
+
+// runeWidth returns the display width of a rune (1 for normal, 2 for wide characters)
+func runeWidth(r rune) int {
+	// Check for zero-width characters
+	if r == 0 || r == '\t' {
+		return 0
+	}
+
+	// Check for control characters
+	if r < 0x20 || (r >= 0x7F && r < 0xA0) {
+		return 0
+	}
+
+	// Check for CJK characters (simplified check)
+	// CJK Unified Ideographs
+	if (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
+		(r >= 0x20000 && r <= 0x2A6DF) || // CJK Extension B
+		(r >= 0x2A700 && r <= 0x2B73F) || // CJK Extension C
+		(r >= 0x2B740 && r <= 0x2B81F) || // CJK Extension D
+		(r >= 0x2B820 && r <= 0x2CEAF) || // CJK Extension E
+		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
+		(r >= 0x2F800 && r <= 0x2FA1F) { // CJK Compatibility Supplement
+		return 2
+	}
+
+	// Hiragana and Katakana
+	if (r >= 0x3040 && r <= 0x309F) || // Hiragana
+		(r >= 0x30A0 && r <= 0x30FF) { // Katakana
+		return 2
+	}
+
+	// Hangul
+	if (r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables
+		(r >= 0x1100 && r <= 0x11FF) || // Hangul Jamo
+		(r >= 0x3130 && r <= 0x318F) || // Hangul Compatibility Jamo
+		(r >= 0xA960 && r <= 0xA97F) || // Hangul Jamo Extended-A
+		(r >= 0xD7B0 && r <= 0xD7FF) { // Hangul Jamo Extended-B
+		return 2
+	}
+
+	// Fullwidth ASCII and symbols
+	if (r >= 0xFF00 && r <= 0xFF60) || // Fullwidth ASCII
+		(r >= 0xFFE0 && r <= 0xFFE6) { // Fullwidth symbols
+		return 2
+	}
+
+	// Default to narrow width
+	return 1
 }
 
 // printChar prints a character at the current cursor position
 func (te *TerminalEmulator) printChar(ch rune) {
-	if te.state.CursorX >= te.state.Width {
+	// Calculate character width
+	charWidth := runeWidth(ch)
+
+	// Debug logging for backspace sequence handling
+	if ch == ' ' {
+		te.logDebug("Printing space at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
+	}
+
+	// For zero-width characters, don't advance cursor
+	if charWidth == 0 {
+		return
+	}
+
+	// Check if there's enough space for wide characters
+	if charWidth == 2 && te.state.CursorX >= te.state.Width-1 {
+		// Not enough space for wide character, move to next line
+		te.newline()
+		te.carriageReturn()
+	} else if te.state.CursorX >= te.state.Width {
 		te.newline()
 		te.carriageReturn()
 	}
@@ -1171,14 +1521,23 @@ func (te *TerminalEmulator) printChar(ch rune) {
 
 	// Get current screen buffer
 	screen := te.GetScreen()
-	
+
 	// Set character in screen buffer
 	screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
 		Char:       ch,
 		Attributes: te.state.Attributes,
 	}
 
-	te.state.CursorX++
+	// For wide characters, mark the next cell as continuation
+	if charWidth == 2 && te.state.CursorX+1 < te.state.Width {
+		screen.Buffer[te.state.CursorY][te.state.CursorX+1] = Cell{
+			Char:       0, // Use null character to indicate this cell is part of previous character
+			Attributes: te.state.Attributes,
+		}
+	}
+
+	// Move cursor by character width
+	te.state.CursorX += charWidth
 	screen.Dirty = true
 }
 
@@ -1193,9 +1552,30 @@ func (te *TerminalEmulator) moveCursor(move CursorMove) {
 		te.state.CursorX = max(0, te.state.CursorX-move.Count)
 	case "right":
 		te.state.CursorX = min(te.state.Width-1, te.state.CursorX+move.Count)
+	case "horizontal":
+		// Move to absolute column position
+		te.state.CursorX = min(te.state.Width-1, max(0, move.Col))
 	case "absolute":
-		te.state.CursorX = max(0, min(te.state.Width-1, move.Col))
-		te.state.CursorY = max(0, min(te.state.Height-1, move.Row))
+		// Ensure coordinates are within bounds
+		// Some terminals send positions beyond screen size
+		newX := move.Col
+		newY := move.Row
+
+		// Clamp to screen bounds
+		if newX < 0 {
+			newX = 0
+		} else if newX >= te.state.Width {
+			newX = te.state.Width - 1
+		}
+
+		if newY < 0 {
+			newY = 0
+		} else if newY >= te.state.Height {
+			newY = te.state.Height - 1
+		}
+
+		te.state.CursorX = newX
+		te.state.CursorY = newY
 	}
 }
 
@@ -1278,7 +1658,7 @@ func (te *TerminalEmulator) scroll(direction string) {
 // scrollUp scrolls the screen up by one line
 func (te *TerminalEmulator) scrollUp() {
 	screen := te.GetScreen()
-	
+
 	// Move all lines up within scroll region
 	for y := te.state.ScrollTop; y < te.state.ScrollBottom; y++ {
 		if y+1 < len(screen.Buffer) {
@@ -1297,7 +1677,7 @@ func (te *TerminalEmulator) scrollUp() {
 // scrollDown scrolls the screen down by one line
 func (te *TerminalEmulator) scrollDown() {
 	screen := te.GetScreen()
-	
+
 	// Move all lines down within scroll region
 	for y := te.state.ScrollBottom; y > te.state.ScrollTop; y-- {
 		if y-1 >= 0 && y < len(screen.Buffer) && y-1 < len(screen.Buffer) {
@@ -1333,8 +1713,19 @@ func (te *TerminalEmulator) setMode(mode string) {
 
 // tab moves cursor to next tab stop
 func (te *TerminalEmulator) tab() {
-	te.state.CursorX = ((te.state.CursorX / 8) + 1) * 8
-	if te.state.CursorX >= te.state.Width {
+	// Find next tab stop after current position
+	nextTab := -1
+	for col := te.state.CursorX + 1; col < te.state.Width; col++ {
+		if te.tabStops[col] {
+			nextTab = col
+			break
+		}
+	}
+
+	if nextTab != -1 {
+		te.state.CursorX = nextTab
+	} else {
+		// No tab stop found, move to end of line
 		te.state.CursorX = te.state.Width - 1
 	}
 }
@@ -1356,6 +1747,9 @@ func (te *TerminalEmulator) carriageReturn() {
 // backspace moves cursor back one position
 func (te *TerminalEmulator) backspace() {
 	if te.state.CursorX > 0 {
+		// Just move cursor back one position
+		// Don't try to be smart about wide characters here
+		// The terminal echo will handle the actual deletion properly
 		te.state.CursorX--
 	}
 }
@@ -1407,7 +1801,7 @@ func (te *TerminalEmulator) setScrollRegion(region ScrollRegion) {
 // clearFromCursor clears from cursor to end of screen
 func (te *TerminalEmulator) clearFromCursor() {
 	screen := te.GetScreen()
-	
+
 	// Clear from cursor to end of current line
 	for x := te.state.CursorX; x < te.state.Width; x++ {
 		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
@@ -1424,7 +1818,7 @@ func (te *TerminalEmulator) clearFromCursor() {
 // clearToCursor clears from beginning of screen to cursor
 func (te *TerminalEmulator) clearToCursor() {
 	screen := te.GetScreen()
-	
+
 	// Clear all lines above current line
 	for y := 0; y < te.state.CursorY; y++ {
 		for x := 0; x < te.state.Width; x++ {
@@ -1441,13 +1835,13 @@ func (te *TerminalEmulator) clearToCursor() {
 // clearEntireScreen clears the entire screen
 func (te *TerminalEmulator) clearEntireScreen() {
 	screen := te.GetScreen()
-	
+
 	for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
 		for x := 0; x < te.state.Width && x < len(screen.Buffer[y]); x++ {
 			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
-	
+
 	// Also reset scroll region when clearing entire screen
 	te.state.ScrollTop = 0
 	te.state.ScrollBottom = te.state.Height - 1
@@ -1462,24 +1856,24 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	// Helper function to resize a screen buffer
 	resizeScreen := func(oldScreen *Screen) *Screen {
 		newScreen := NewScreen(width, height)
-		
+
 		// Copy existing content
 		copyHeight := min(height, oldScreen.Height)
 		copyWidth := min(width, oldScreen.Width)
-		
+
 		for y := 0; y < copyHeight && y < len(oldScreen.Buffer) && y < len(newScreen.Buffer); y++ {
 			for x := 0; x < copyWidth && x < len(oldScreen.Buffer[y]) && x < len(newScreen.Buffer[y]); x++ {
 				newScreen.Buffer[y][x] = oldScreen.Buffer[y][x]
 			}
 		}
-		
+
 		return newScreen
 	}
 
 	// Resize both screen buffers
 	te.screen = resizeScreen(te.screen)
 	te.altScreen = resizeScreen(te.altScreen)
-	
+
 	// Update terminal state
 	te.state.Width = width
 	te.state.Height = height
@@ -1491,6 +1885,24 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	// Adjust scroll region
 	te.state.ScrollBottom = height - 1
 	te.state.ScrollTop = 0
+
+	// Rebuild tab stops for new width
+	oldTabStops := te.tabStops
+	te.tabStops = make(map[int]bool)
+
+	// Copy existing tab stops that are still within bounds
+	for col, _ := range oldTabStops {
+		if col < width {
+			te.tabStops[col] = true
+		}
+	}
+
+	// Ensure default tab stops exist
+	for i := 8; i < width; i += 8 {
+		if _, exists := te.tabStops[i]; !exists {
+			te.tabStops[i] = true
+		}
+	}
 
 	return nil
 }
@@ -1531,6 +1943,25 @@ func (te *TerminalEmulator) restoreCursor() {
 		te.state.CursorX = te.savedState.CursorX
 		te.state.CursorY = te.savedState.CursorY
 		te.state.Attributes = te.savedState.Attributes
+	}
+}
+
+// setTabStop sets a tab stop at the current cursor position
+func (te *TerminalEmulator) setTabStop() {
+	te.tabStops[te.state.CursorX] = true
+}
+
+// clearTabStop clears tab stops based on mode
+func (te *TerminalEmulator) clearTabStop(mode int) {
+	switch mode {
+	case 0: // Clear tab stop at current position
+		delete(te.tabStops, te.state.CursorX)
+	case 3: // Clear all tab stops
+		te.tabStops = make(map[int]bool)
+		// Restore default tab stops every 8 columns
+		for i := 8; i < te.state.Width; i += 8 {
+			te.tabStops[i] = true
+		}
 	}
 }
 

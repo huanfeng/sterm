@@ -20,6 +20,10 @@ var (
 	connectStopBits int
 	connectParity   string
 	connectTimeout  int
+
+	// Terminal behavior flags
+	sendWindowSize bool
+	terminalType   string
 )
 
 // connectCmd represents the connect command
@@ -53,6 +57,10 @@ func init() {
 	connectCmd.Flags().IntVarP(&connectStopBits, "stop", "s", 1, "stop bits (1 or 2)")
 	connectCmd.Flags().StringVar(&connectParity, "parity", "none", "parity (none, odd, even, mark, space)")
 	connectCmd.Flags().IntVarP(&connectTimeout, "timeout", "t", 10, "read timeout in seconds")
+
+	// Terminal behavior flags
+	connectCmd.Flags().BoolVar(&sendWindowSize, "send-window-size", false, "send terminal window size to remote device (may cause issues with some devices)")
+	connectCmd.Flags().StringVar(&terminalType, "term-type", "xterm", "terminal type to report (vt100, xterm, xterm-256color)")
 }
 
 func runConnect(cmd *cobra.Command, args []string) {
@@ -133,11 +141,17 @@ func runConnect(cmd *cobra.Command, args []string) {
 	// Test connection
 	testConnection(serialConfig)
 
-	// Launch terminal UI
+	// Launch terminal UI with additional options
 	fmt.Println("\nStarting terminal session...")
 	fmt.Println("Press Ctrl+Shift+Q to exit (customizable in settings)")
 
-	if err := app.RunInteractive(serialConfig); err != nil {
+	// Pass terminal behavior options
+	appOpts := app.AppOptions{
+		SendWindowSize: sendWindowSize,
+		TerminalType:   terminalType,
+	}
+
+	if err := app.RunInteractiveWithOptions(serialConfig, appOpts); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running terminal: %v\n", err)
 		os.Exit(1)
 	}

@@ -119,11 +119,41 @@ func (r *Runner) Stop() error {
 	return nil
 }
 
+// AppOptions contains runtime options for the application
+type AppOptions struct {
+	SendWindowSize bool
+	TerminalType   string
+}
+
 // RunInteractive runs the application in interactive mode with a UI
 func RunInteractive(serialConfig serial.SerialConfig) error {
 	runner, err := NewRunner(serialConfig)
 	if err != nil {
 		return err
+	}
+
+	return runner.Run()
+}
+
+// RunInteractiveWithOptions runs the application with additional options
+func RunInteractiveWithOptions(serialConfig serial.SerialConfig, opts AppOptions) error {
+	// Create app config
+	appConfig := DefaultAppConfig()
+	appConfig.SerialConfig = serialConfig
+
+	// Apply options
+	appConfig.SendWindowSizeOnConnect = opts.SendWindowSize
+	appConfig.SendWindowSizeOnResize = opts.SendWindowSize
+	if opts.TerminalType != "" {
+		appConfig.TerminalType = opts.TerminalType
+	}
+
+	// Don't set fixed size - let the app detect from actual terminal
+	appConfig.TerminalWidth = 0
+	appConfig.TerminalHeight = 0
+
+	runner := &Runner{
+		config: appConfig,
 	}
 
 	return runner.Run()

@@ -50,27 +50,33 @@ type Application struct {
 
 // AppConfig contains application configuration
 type AppConfig struct {
-	SerialConfig    serial.SerialConfig
-	TerminalWidth   int
-	TerminalHeight  int
-	HistorySize     int
-	EnableMouse     bool
-	EnableShortcuts bool
-	SaveHistory     bool
-	HistoryFormat   history.FileFormat
+	SerialConfig            serial.SerialConfig
+	TerminalWidth           int
+	TerminalHeight          int
+	HistorySize             int
+	EnableMouse             bool
+	EnableShortcuts         bool
+	SaveHistory             bool
+	HistoryFormat           history.FileFormat
+	SendWindowSizeOnConnect bool   // Send window size when connecting
+	SendWindowSizeOnResize  bool   // Send window size when resizing
+	TerminalType            string // Terminal type to report (vt100, xterm, etc.)
 }
 
 // DefaultAppConfig returns default application configuration
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
-		SerialConfig:    serial.DefaultConfig(),
-		TerminalWidth:   80,
-		TerminalHeight:  24,
-		HistorySize:     10 * 1024 * 1024, // 10MB
-		EnableMouse:     true,
-		EnableShortcuts: true,
-		SaveHistory:     true,
-		HistoryFormat:   history.FormatTimestamped,
+		SerialConfig:            serial.DefaultConfig(),
+		TerminalWidth:           80,
+		TerminalHeight:          24,
+		HistorySize:             10 * 1024 * 1024, // 10MB
+		EnableMouse:             true,
+		EnableShortcuts:         true,
+		SaveHistory:             true,
+		HistoryFormat:           history.FormatTimestamped,
+		SendWindowSizeOnConnect: false,   // Disabled by default - can cause issues with some devices
+		SendWindowSizeOnResize:  false,   // Disabled by default
+		TerminalType:            "xterm", // Default to xterm for better compatibility
 	}
 }
 
@@ -133,6 +139,11 @@ func (app *Application) logDebug(format string, args ...interface{}) {
 		fmt.Fprintf(app.debugLog, "[%s] %s\n", timestamp, msg)
 		app.debugLog.Sync() // Ensure it's written immediately
 	}
+}
+
+// Debugf implements the terminal.Logger interface
+func (app *Application) Debugf(format string, args ...interface{}) {
+	app.logDebug(format, args...)
 }
 
 // NewApplication creates a new application instance
@@ -219,6 +230,9 @@ func (app *Application) initializeComponents() error {
 		height,
 	)
 
+	// Set logger for terminal debugging
+	app.terminal.SetLogger(app)
+
 	// Create shortcut manager
 	app.shortcuts = terminal.NewShortcutManager()
 	app.setupShortcuts()
@@ -298,18 +312,31 @@ func (app *Application) Start() error {
 
 	// Set running state
 	app.isRunning = true
-	
-	// Send initial terminal size to remote device
-	width, height := app.screen.Size()
-	if app.serialPort != nil && app.serialPort.IsOpen() {
-		// Send terminal type
-		app.serialPort.Write([]byte("\x1b[?1;2c")) // VT100 with AVO
-		
-		// Send window size
-		sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
-		app.serialPort.Write([]byte(sizeSeq))
-		
-		app.logDebug("Sent initial terminal size %dx%d to remote", width, height)
+
+	// Send initial terminal size to remote device if configured
+	if app.config.SendWindowSizeOnConnect {
+		width, height := app.screen.Size()
+		if app.serialPort != nil && app.serialPort.IsOpen() {
+			// Send terminal type response based on configuration
+			if app.config.TerminalType == "vt100" {
+				app.serialPort.Write([]byte("\x1b[?1;2c")) // VT100 with AVO
+			} else if app.config.TerminalType == "xterm" {
+				app.serialPort.Write([]byte("\x1b[?62;c")) // xterm
+			}
+
+			// Send window size using stty-compatible format
+			// Some systems expect: ESC[8;<height>;<width>t
+			// Others use environment variables or stty
+			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+			app.serialPort.Write([]byte(sizeSeq))
+
+			// Also try sending as environment variable format
+			// This helps with programs that use LINES/COLUMNS
+			envSeq := fmt.Sprintf("\x1b]0;LINES=%d;COLUMNS=%d\x07", height, width)
+			app.serialPort.Write([]byte(envSeq))
+
+			app.logDebug("Sent initial terminal size %dx%d to remote", width, height)
+		}
 	}
 
 	// Start data flow goroutines
@@ -647,17 +674,20 @@ func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
 func (app *Application) handleResize() {
 	width, height := app.screen.Size()
 	app.terminal.Resize(width, height)
-	
-	// Send terminal size update to remote device
-	// This sends the TIOCSWINSZ equivalent over serial
-	// Format: ESC[8;<height>;<width>t
-	if app.serialPort != nil && app.serialPort.IsOpen() && !app.isPaused {
-		sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
-		app.serialPort.Write([]byte(sizeSeq))
-		
-		app.logDebug("Window resized to %dx%d, sent size update to remote", width, height)
+
+	// Only send terminal size update if explicitly configured
+	// Most serial devices don't support this and it causes garbage output
+	if app.config.SendWindowSizeOnResize {
+		if app.serialPort != nil && app.serialPort.IsOpen() && !app.isPaused {
+			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+			app.serialPort.Write([]byte(sizeSeq))
+
+			app.logDebug("Window resized to %dx%d, sent size update to remote", width, height)
+		}
+	} else {
+		app.logDebug("Window resized to %dx%d (not sending to remote)", width, height)
 	}
-	
+
 	app.screen.Clear()
 	app.updateDisplay()
 }
