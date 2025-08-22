@@ -543,7 +543,14 @@ func (vt *VTParser) handleEscape(b byte, screen *Screen, state *TerminalState) [
 
 // handleCSI processes Control Sequence Introducer sequences
 func (vt *VTParser) handleCSI(b byte, screen *Screen, state *TerminalState) []Action {
-	if b >= 0x30 && b <= 0x3F { // Parameter bytes
+	// Special handling for '?' which marks private mode parameters
+	if b == '?' && len(vt.Buffer) == 0 && len(vt.Params) == 0 {
+		// '?' at the beginning is an intermediate byte for private modes
+		vt.Intermediate = append(vt.Intermediate, b)
+		return nil
+	}
+
+	if b >= 0x30 && b <= 0x3F { // Parameter bytes (0-9, :, ;, <, =, >, ?)
 		vt.Buffer = append(vt.Buffer, b)
 		return nil
 	}
@@ -1681,13 +1688,21 @@ func (te *TerminalEmulator) setMode(mode string) {
 	case "cursor_hidden":
 		// TODO: Implement cursor visibility
 	case "mouse_x10":
+		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeX10
+		te.logDebug("Mouse mode changed: %v -> %v (X10)", oldMode, te.state.MouseMode)
 	case "mouse_btn_event":
+		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeBtnEvent
+		te.logDebug("Mouse mode changed: %v -> %v (Button Event)", oldMode, te.state.MouseMode)
 	case "mouse_any_event":
+		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeAnyEvent
+		te.logDebug("Mouse mode changed: %v -> %v (Any Event)", oldMode, te.state.MouseMode)
 	case "mouse_off":
+		oldMode := te.state.MouseMode
 		te.state.MouseMode = MouseModeOff
+		te.logDebug("Mouse mode changed: %v -> %v (Off)", oldMode, te.state.MouseMode)
 	}
 }
 
@@ -2109,52 +2124,60 @@ func (mh *MouseHandler) tcellToMouseEvent(x, y int, buttons tcell.ButtonMask) Mo
 	var button MouseButton
 	var action MouseAction
 
-	// Determine button
+	// Determine which button is currently pressed
+	currentButton := MouseButtonNone
 	switch {
 	case buttons&tcell.Button1 != 0:
-		button = MouseButtonLeft
+		currentButton = MouseButtonLeft
 	case buttons&tcell.Button2 != 0:
-		button = MouseButtonMiddle
+		currentButton = MouseButtonMiddle
 	case buttons&tcell.Button3 != 0:
-		button = MouseButtonRight
+		currentButton = MouseButtonRight
 	case buttons&tcell.WheelUp != 0:
-		button = MouseButtonWheelUp
+		currentButton = MouseButtonWheelUp
 	case buttons&tcell.WheelDown != 0:
-		button = MouseButtonWheelDown
-	default:
-		button = MouseButtonNone
+		currentButton = MouseButtonWheelDown
 	}
 
-	// Determine action
-	if button == MouseButtonNone {
-		// Mouse move without button
+	// Handle button state changes
+	if currentButton == MouseButtonNone {
+		// No button pressed now - check if we had a button pressed before
 		if mh.dragButton != MouseButtonNone {
-			action = MouseActionRelease
+			// Button was released
 			button = mh.dragButton
+			action = MouseActionRelease
+			mh.buttonState[mh.dragButton] = false
+			// Debug: log release detection
+			// fmt.Printf("Mouse: Release detected for button %v\n", button)
 			mh.dragButton = MouseButtonNone
+		} else if x != mh.lastX || y != mh.lastY {
+			// Mouse moved without button
+			button = MouseButtonNone
+			action = MouseActionMove
 		} else {
+			// No change
+			button = MouseButtonNone
 			action = MouseActionMove
 		}
 	} else {
-		// Button event
+		// Button is pressed
+		button = currentButton
 		wasPressed := mh.buttonState[button]
-		isPressed := buttons != 0
 
-		if isPressed && !wasPressed {
+		if !wasPressed {
+			// Button just pressed
 			action = MouseActionPress
+			mh.buttonState[button] = true
 			if button != MouseButtonWheelUp && button != MouseButtonWheelDown {
 				mh.dragButton = button
 			}
-		} else if !isPressed && wasPressed {
-			action = MouseActionRelease
-			mh.dragButton = MouseButtonNone
-		} else if isPressed && (x != mh.lastX || y != mh.lastY) {
+		} else if x != mh.lastX || y != mh.lastY {
+			// Button held and mouse moved (drag)
 			action = MouseActionDrag
 		} else {
-			action = MouseActionMove
+			// Button held but no movement
+			action = MouseActionPress // Keep reporting as press
 		}
-
-		mh.buttonState[button] = isPressed
 	}
 
 	mh.lastX = x
@@ -2230,10 +2253,16 @@ func (mh *MouseHandler) generateVT200Sequence(event MouseEvent) []byte {
 func (mh *MouseHandler) generateBtnEventSequence(event MouseEvent) []byte {
 	// Button event mode reports press, release, and drag
 	if event.Action == MouseActionMove && event.Button == MouseButtonNone {
-		return nil // Don't report plain moves
+		return nil // Don't report plain moves without button
 	}
 
-	cb := mh.buttonToBtnEventCode(event.Button, event.Action)
+	var cb int
+	if event.Action == MouseActionRelease {
+		// Release always uses code 3
+		cb = 3
+	} else {
+		cb = mh.buttonToBtnEventCode(event.Button, event.Action)
+	}
 	if cb == -1 {
 		return nil
 	}
@@ -2248,9 +2277,28 @@ func (mh *MouseHandler) generateBtnEventSequence(event MouseEvent) []byte {
 
 // generateAnyEventSequence generates any event sequence
 func (mh *MouseHandler) generateAnyEventSequence(event MouseEvent) []byte {
-	// Any event mode reports all mouse events
-	cb := mh.buttonToAnyEventCode(event.Button, event.Action)
-	if cb == -1 {
+	// Any event mode reports all mouse events including moves
+	var cb int
+
+	switch event.Action {
+	case MouseActionRelease:
+		// Release always uses code 3
+		cb = 3
+	case MouseActionMove:
+		if event.Button == MouseButtonNone {
+			// Motion without button uses code 35
+			cb = 35
+		} else {
+			// Motion with button (shouldn't happen, but handle it)
+			cb = 32 + int(event.Button)
+		}
+	case MouseActionDrag:
+		// Drag uses button code + 32
+		cb = 32 + int(event.Button)
+	case MouseActionPress:
+		// Press uses button code
+		cb = int(event.Button)
+	default:
 		return nil
 	}
 
@@ -2532,12 +2580,12 @@ func (kh *KeyHandler) handleFunctionKey(key tcell.Key, mods tcell.ModMask) []byt
 		if mods&tcell.ModCtrl != 0 {
 			modValue += 4
 		}
-		
+
 		// F1-F4 with modifiers: ESC[1;modifierP/Q/R/S
 		letter := []byte{'P', 'Q', 'R', 'S'}[key-tcell.KeyF1]
 		return []byte{0x1B, '[', '1', ';', byte('0' + modValue), letter}
 	}
-	
+
 	var base []byte
 
 	switch key {
@@ -2590,19 +2638,19 @@ func (kh *KeyHandler) addFunctionKeyModifiers(base []byte, mods tcell.ModMask) [
 	if mods&tcell.ModCtrl != 0 {
 		modValue += 4
 	}
-	
+
 	if modValue == 1 {
 		return base // No modifiers
 	}
-	
+
 	// For sequences like ESC[15~, convert to ESC[15;2~ for modified version
 	if len(base) >= 4 && base[0] == 0x1B && base[1] == '[' && base[len(base)-1] == '~' {
 		result := make([]byte, 0, len(base)+3)
-		result = append(result, base[:len(base)-1]...)  // Everything except ~
+		result = append(result, base[:len(base)-1]...)        // Everything except ~
 		result = append(result, ';', byte('0'+modValue), '~') // Add ;modifier~
 		return result
 	}
-	
+
 	return base
 }
 
@@ -2812,6 +2860,11 @@ func (ip *InputProcessor) processMouseEvent(event *tcell.EventMouse) error {
 
 // ProcessMouseEvent processes mouse events and returns the data to send
 func (ip *InputProcessor) ProcessMouseEvent(event *tcell.EventMouse) []byte {
+	// Set the mouse mode from terminal state before processing
+	if ip.terminal != nil {
+		currentMode := ip.terminal.GetState().MouseMode
+		ip.mouseHandler.SetMode(currentMode)
+	}
 	return ip.mouseHandler.ProcessTcellEvent(event)
 }
 

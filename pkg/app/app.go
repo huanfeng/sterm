@@ -19,10 +19,11 @@ import (
 // Application represents the main application controller
 type Application struct {
 	// Core components
-	serialPort serial.SerialPort
-	terminal   *terminal.TerminalEmulator
-	configMgr  config.ConfigManager
-	historyMgr history.HistoryManager
+	serialPort     serial.SerialPort
+	terminal       *terminal.TerminalEmulator
+	configMgr      config.ConfigManager
+	historyMgr     history.HistoryManager
+	inputProcessor *terminal.InputProcessor // Keep single instance for state
 
 	// UI components
 	screen    tcell.Screen
@@ -207,6 +208,12 @@ func (app *Application) initializeComponents() error {
 	screen.SetStyle(defaultStyle)
 	screen.Clear()
 
+	// Enable mouse support if configured
+	if app.config.EnableMouse {
+		screen.EnableMouse()
+		// Note: Mouse support enabled in tcell screen
+	}
+
 	app.screen = screen
 
 	// Get actual terminal dimensions from tcell screen
@@ -232,6 +239,9 @@ func (app *Application) initializeComponents() error {
 
 	// Set logger for terminal debugging
 	app.terminal.SetLogger(app)
+
+	// Create input processor (single instance to maintain state)
+	app.inputProcessor = terminal.NewInputProcessor(app.terminal)
 
 	// Create shortcut manager
 	app.shortcuts = terminal.NewShortcutManager()
@@ -555,12 +565,12 @@ func (app *Application) handleUserInput() {
 
 // handleKeyEvent handles keyboard events
 func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
-	// Debug log ALL key events
-	if ev.Key() == tcell.KeyRune {
-		app.logDebug("Key: Rune='%c'(0x%x), Mods=%v", ev.Rune(), ev.Rune(), ev.Modifiers())
-	} else {
-		app.logDebug("Key: Key=%v, Mods=%v", ev.Key(), ev.Modifiers())
-	}
+	// Debug log key events (commented out for performance)
+	// if ev.Key() == tcell.KeyRune {
+	// 	app.logDebug("Key: Rune='%c'(0x%x), Mods=%v", ev.Rune(), ev.Rune(), ev.Modifiers())
+	// } else {
+	// 	app.logDebug("Key: Key=%v, Mods=%v", ev.Key(), ev.Modifiers())
+	// }
 
 	// Check for exit combinations
 	// Key=17 is tcell.KeyCtrlQ
@@ -631,9 +641,8 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		}
 	}
 
-	// Process as terminal input
-	inputProcessor := terminal.NewInputProcessor(app.terminal)
-	data := inputProcessor.ProcessKeyEvent(ev)
+	// Process as terminal input using shared processor
+	data := app.inputProcessor.ProcessKeyEvent(ev)
 
 	if len(data) > 0 && !app.isPaused {
 		// Send to serial port
@@ -655,19 +664,48 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 
 // handleMouseEvent handles mouse events
 func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
+	// Debug log mouse event details (commented out for performance)
+	// x, y := ev.Position()
+	// buttons := ev.Buttons()
+	// modifiers := ev.Modifiers()
+	// app.logDebug("Mouse event: pos=(%d,%d), buttons=%d, mods=%v", x, y, buttons, modifiers)
+
 	if !app.config.EnableMouse {
+		// app.logDebug("Mouse events disabled in config")
 		return
 	}
 
-	inputProcessor := terminal.NewInputProcessor(app.terminal)
-	data := inputProcessor.ProcessMouseEvent(ev)
+	// Check current mouse mode (commented out for performance)
+	// mouseMode := app.terminal.GetState().MouseMode
+	// app.logDebug("Current mouse mode: %v", mouseMode)
 
-	if len(data) > 0 && !app.isPaused {
-		// Send to serial port
-		if app.serialPort != nil && app.serialPort.IsOpen() {
-			app.serialPort.Write(data)
+	// Use shared input processor to maintain mouse button state
+	data := app.inputProcessor.ProcessMouseEvent(ev)
+
+	if len(data) > 0 {
+		// app.logDebug("Mouse sequence generated: %X (%d bytes)", data, len(data))
+		if !app.isPaused {
+			// Send to serial port
+			if app.serialPort != nil && app.serialPort.IsOpen() {
+				_, err := app.serialPort.Write(data)
+				if err != nil {
+					app.logDebug("Failed to send mouse sequence: %v", err)
+				}
+				// Commented out for performance
+				// else {
+				// 	app.logDebug("Sent %d bytes of mouse sequence", n)
+				// }
+			}
 		}
+		// Commented out for performance
+		// else {
+		// 	app.logDebug("Terminal paused, not sending mouse sequence")
+		// }
 	}
+	// Commented out for performance
+	// else {
+	// 	app.logDebug("No mouse sequence generated (mouse mode may be off)")
+	// }
 }
 
 // handleResize handles terminal resize events
