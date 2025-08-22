@@ -176,22 +176,28 @@ func (m MouseMode) String() string {
 // TerminalEmulator implements the Terminal interface
 type TerminalEmulator struct {
 	screen         *Screen
+	altScreen      *Screen  // Alternative screen buffer for full-screen apps
 	parser         *VTParser
 	serialPort     serial.SerialPort
 	historyManager history.HistoryManager
 	state          TerminalState
+	savedState     *TerminalState  // Saved cursor state for DECSC/DECRC
 	isRunning      bool
+	useAltScreen   bool  // Whether using alternative screen
 }
 
 // NewTerminalEmulator creates a new terminal emulator
 func NewTerminalEmulator(serialPort serial.SerialPort, historyManager history.HistoryManager, width, height int) *TerminalEmulator {
 	return &TerminalEmulator{
 		screen:         NewScreen(width, height),
+		altScreen:      NewScreen(width, height),
 		parser:         NewVTParser(),
 		serialPort:     serialPort,
 		historyManager: historyManager,
 		state:          DefaultTerminalState(width, height),
+		savedState:     nil,
 		isRunning:      false,
+		useAltScreen:   false,
 	}
 }
 
@@ -312,6 +318,10 @@ const (
 	ActionDeleteChar
 	ActionInsertChar
 	ActionSetScrollRegion
+	ActionSaveCursor
+	ActionRestoreCursor
+	ActionSwitchAltScreen
+	ActionSendResponse
 )
 
 // handleGround processes characters in ground state
@@ -371,12 +381,10 @@ func (vt *VTParser) handleEscape(b byte, screen *Screen, state *TerminalState) [
 		return nil
 	case '7': // DECSC - Save Cursor
 		vt.Reset()
-		// TODO: Implement cursor save
-		return nil
+		return []Action{{Type: ActionSaveCursor}}
 	case '8': // DECRC - Restore Cursor
 		vt.Reset()
-		// TODO: Implement cursor restore
-		return nil
+		return []Action{{Type: ActionRestoreCursor}}
 	case '=': // DECKPAM - Keypad Application Mode
 		vt.Reset()
 		return []Action{{Type: ActionSetMode, Data: "keypad_app"}}
@@ -447,11 +455,9 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 		bottom := vt.getParam(1, state.Height) - 1
 		return []Action{{Type: ActionSetScrollRegion, Data: ScrollRegion{Top: top, Bottom: bottom}}}
 	case 's': // SCOSC - Save Cursor Position
-		// TODO: Implement cursor save
-		return nil
+		return []Action{{Type: ActionSaveCursor}}
 	case 'u': // SCORC - Restore Cursor Position
-		// TODO: Implement cursor restore
-		return nil
+		return []Action{{Type: ActionRestoreCursor}}
 	case 'h': // SM - Set Mode
 		return vt.handleSetMode(true)
 	case 'l': // RM - Reset Mode
@@ -462,6 +468,44 @@ func (vt *VTParser) executeCSI(final byte, screen *Screen, state *TerminalState)
 	case '@': // ICH - Insert Character
 		count := vt.getParam(0, 1)
 		return []Action{{Type: ActionInsertChar, Data: count}}
+	case 'n': // DSR - Device Status Report
+		mode := vt.getParam(0, 0)
+		switch mode {
+		case 5: // Status Report
+			// Report that terminal is OK
+			response := "\x1b[0n"
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		case 6: // Report cursor position
+			// Response: ESC[<row>;<col>R
+			row := state.CursorY + 1
+			col := state.CursorX + 1
+			response := fmt.Sprintf("\x1b[%d;%dR", row, col)
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		}
+		return nil
+	case 't': // Window manipulation
+		operation := vt.getParam(0, 0)
+		switch operation {
+		case 8: // Resize text area (from remote)
+			// ESC[8;<height>;<width>t
+			// This is already handled in app.go when we send it
+			return nil
+		case 14: // Report text area size in pixels (not supported)
+			return nil
+		case 18: // Report text area size in characters
+			// Response: ESC[8;<height>;<width>t
+			response := fmt.Sprintf("\x1b[8;%d;%dt", state.Height, state.Width)
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		case 19: // Report screen size in characters
+			// Response: ESC[9;<height>;<width>t
+			response := fmt.Sprintf("\x1b[9;%d;%dt", state.Height, state.Width)
+			return []Action{{Type: ActionSendResponse, Data: response}}
+		}
+		return nil
+	case 'c': // DA - Device Attributes
+		// Send VT100 response
+		response := "\x1b[?1;2c" // VT100 with AVO
+		return []Action{{Type: ActionSendResponse, Data: response}}
 	default:
 		return nil
 	}
@@ -576,57 +620,133 @@ func (vt *VTParser) sgrParamToAction(param int) *Action {
 // handleSetMode handles mode setting sequences
 func (vt *VTParser) handleSetMode(set bool) []Action {
 	var actions []Action
+	
+	// Check if this is a private mode (starts with '?')
+	isPrivate := len(vt.Intermediate) > 0 && vt.Intermediate[0] == '?'
 
 	for _, param := range vt.Params {
 		var mode string
-		switch param {
-		case 4: // IRM - Insert/Replace Mode
-			if set {
-				mode = "insert"
-			} else {
-				mode = "replace"
+		
+		if isPrivate {
+			// Private modes (DEC modes)
+			switch param {
+			case 1: // DECCKM - Cursor Keys Mode
+				if set {
+					mode = "cursor_app"
+				} else {
+					mode = "cursor_normal"
+				}
+			case 3: // DECCOLM - 132 Column Mode (not fully supported)
+				continue
+			case 4: // DECSCLM - Smooth Scrolling (not supported)
+				continue
+			case 5: // DECSCNM - Reverse Video
+				if set {
+					mode = "reverse_video"
+				} else {
+					mode = "normal_video"
+				}
+			case 6: // DECOM - Origin Mode
+				if set {
+					mode = "origin_mode"
+				} else {
+					mode = "absolute_mode"
+				}
+			case 7: // DECAWM - Auto Wrap Mode
+				if set {
+					mode = "autowrap_on"
+				} else {
+					mode = "autowrap_off"
+				}
+			case 25: // DECTCEM - Text Cursor Enable Mode
+				if set {
+					mode = "cursor_visible"
+				} else {
+					mode = "cursor_hidden"
+				}
+			case 47: // Use Alternate Screen Buffer (old style)
+				if set {
+					return []Action{{Type: ActionSwitchAltScreen, Data: true}}
+				} else {
+					return []Action{{Type: ActionSwitchAltScreen, Data: false}}
+				}
+			case 1000: // Mouse tracking
+				if set {
+					mode = "mouse_x10"
+				} else {
+					mode = "mouse_off"
+				}
+			case 1002: // Cell motion mouse tracking
+				if set {
+					mode = "mouse_btn_event"
+				} else {
+					mode = "mouse_off"
+				}
+			case 1003: // All motion mouse tracking
+				if set {
+					mode = "mouse_any_event"
+				} else {
+					mode = "mouse_off"
+				}
+			case 1047: // Use Alternate Screen Buffer (new style)
+				if set {
+					return []Action{{Type: ActionSwitchAltScreen, Data: true}}
+				} else {
+					return []Action{{Type: ActionSwitchAltScreen, Data: false}}
+				}
+			case 1048: // Save/Restore Cursor
+				if set {
+					return []Action{{Type: ActionSaveCursor}}
+				} else {
+					return []Action{{Type: ActionRestoreCursor}}
+				}
+			case 1049: // Alternative screen buffer + save/restore cursor
+				if set {
+					// Save cursor, switch to alt screen, clear it
+					return []Action{
+						{Type: ActionSaveCursor},
+						{Type: ActionSwitchAltScreen, Data: true},
+						{Type: ActionClearScreen, Data: 2},
+					}
+				} else {
+					// Switch back to normal screen, restore cursor
+					return []Action{
+						{Type: ActionSwitchAltScreen, Data: false},
+						{Type: ActionRestoreCursor},
+					}
+				}
+			case 2004: // Bracketed Paste Mode
+				if set {
+					mode = "bracketed_paste_on"
+				} else {
+					mode = "bracketed_paste_off"
+				}
+			default:
+				continue
 			}
-		case 20: // LNM - Line Feed/New Line Mode
-			if set {
-				mode = "newline"
-			} else {
-				mode = "linefeed"
+		} else {
+			// Standard modes
+			switch param {
+			case 4: // IRM - Insert/Replace Mode
+				if set {
+					mode = "insert"
+				} else {
+					mode = "replace"
+				}
+			case 20: // LNM - Line Feed/New Line Mode
+				if set {
+					mode = "newline"
+				} else {
+					mode = "linefeed"
+				}
+			default:
+				continue
 			}
-		case 25: // DECTCEM - Text Cursor Enable Mode
-			if set {
-				mode = "cursor_visible"
-			} else {
-				mode = "cursor_hidden"
-			}
-		case 1000: // Mouse tracking
-			if set {
-				mode = "mouse_x10"
-			} else {
-				mode = "mouse_off"
-			}
-		case 1002: // Cell motion mouse tracking
-			if set {
-				mode = "mouse_btn_event"
-			} else {
-				mode = "mouse_off"
-			}
-		case 1003: // All motion mouse tracking
-			if set {
-				mode = "mouse_any_event"
-			} else {
-				mode = "mouse_off"
-			}
-		case 1049: // Alternative screen buffer
-			if set {
-				mode = "alt_screen"
-			} else {
-				mode = "normal_screen"
-			}
-		default:
-			continue
 		}
 
-		actions = append(actions, Action{Type: ActionSetMode, Data: mode})
+		if mode != "" {
+			actions = append(actions, Action{Type: ActionSetMode, Data: mode})
+		}
 	}
 
 	return actions
@@ -960,16 +1080,33 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 	}
 
 	// Process each byte through the VT parser
-	for _, b := range output {
-		actions := te.parser.ParseByte(b, te.screen, &te.state)
+	for i, b := range output {
+		// Debug logging for escape sequences
+		if te.parser.State != StateGround {
+			// In escape sequence processing
+			if b >= 0x20 && b < 0x7F {
+				te.logDebug("ESC seq byte %d: 0x%02X '%c' state=%d", i, b, b, te.parser.State)
+			} else {
+				te.logDebug("ESC seq byte %d: 0x%02X state=%d", i, b, te.parser.State)
+			}
+		}
+		
+		actions := te.parser.ParseByte(b, te.GetScreen(), &te.state)
 
 		// Execute actions
 		for _, action := range actions {
+			te.logDebug("Executing action: %v", action.Type)
 			te.executeAction(action)
 		}
 	}
 
 	return nil
+}
+
+// logDebug logs debug messages (placeholder - would be connected to actual logger)
+func (te *TerminalEmulator) logDebug(format string, args ...interface{}) {
+	// This would be connected to the actual debug logger
+	// For now, it's a no-op to avoid performance impact
 }
 
 // executeAction executes a terminal action
@@ -1005,6 +1142,18 @@ func (te *TerminalEmulator) executeAction(action Action) {
 		te.insertChar(action.Data.(int))
 	case ActionSetScrollRegion:
 		te.setScrollRegion(action.Data.(ScrollRegion))
+	case ActionSaveCursor:
+		te.saveCursor()
+	case ActionRestoreCursor:
+		te.restoreCursor()
+	case ActionSwitchAltScreen:
+		te.switchAltScreen(action.Data.(bool))
+	case ActionSendResponse:
+		// Send response back to remote device
+		if te.serialPort != nil && te.serialPort.IsOpen() {
+			response := action.Data.(string)
+			te.serialPort.Write([]byte(response))
+		}
 	}
 }
 
@@ -1020,14 +1169,17 @@ func (te *TerminalEmulator) printChar(ch rune) {
 		te.state.CursorY = te.state.Height - 1
 	}
 
+	// Get current screen buffer
+	screen := te.GetScreen()
+	
 	// Set character in screen buffer
-	te.screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
+	screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
 		Char:       ch,
 		Attributes: te.state.Attributes,
 	}
 
 	te.state.CursorX++
-	te.screen.Dirty = true
+	screen.Dirty = true
 }
 
 // moveCursor moves the cursor
@@ -1057,28 +1209,29 @@ func (te *TerminalEmulator) clearScreen(mode int) {
 	case 2: // Clear entire screen
 		te.clearEntireScreen()
 	}
-	te.screen.Dirty = true
+	te.GetScreen().Dirty = true
 }
 
 // clearLine clears the current line
 func (te *TerminalEmulator) clearLine(mode int) {
 	y := te.state.CursorY
+	screen := te.GetScreen()
 
 	switch mode {
 	case 0: // Clear from cursor to end of line
 		for x := te.state.CursorX; x < te.state.Width; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	case 1: // Clear from beginning of line to cursor
 		for x := 0; x <= te.state.CursorX; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	case 2: // Clear entire line
 		for x := 0; x < te.state.Width; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
-	te.screen.Dirty = true
+	screen.Dirty = true
 }
 
 // setAttribute sets text attributes
@@ -1119,32 +1272,44 @@ func (te *TerminalEmulator) scroll(direction string) {
 	case "down":
 		te.scrollDown()
 	}
-	te.screen.Dirty = true
+	te.GetScreen().Dirty = true
 }
 
 // scrollUp scrolls the screen up by one line
 func (te *TerminalEmulator) scrollUp() {
-	// Move all lines up
+	screen := te.GetScreen()
+	
+	// Move all lines up within scroll region
 	for y := te.state.ScrollTop; y < te.state.ScrollBottom; y++ {
-		copy(te.screen.Buffer[y], te.screen.Buffer[y+1])
+		if y+1 < len(screen.Buffer) {
+			copy(screen.Buffer[y], screen.Buffer[y+1])
+		}
 	}
 
-	// Clear bottom line
-	for x := 0; x < te.state.Width; x++ {
-		te.screen.Buffer[te.state.ScrollBottom][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+	// Clear bottom line of scroll region
+	if te.state.ScrollBottom < len(screen.Buffer) {
+		for x := 0; x < te.state.Width && x < len(screen.Buffer[te.state.ScrollBottom]); x++ {
+			screen.Buffer[te.state.ScrollBottom][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		}
 	}
 }
 
 // scrollDown scrolls the screen down by one line
 func (te *TerminalEmulator) scrollDown() {
-	// Move all lines down
+	screen := te.GetScreen()
+	
+	// Move all lines down within scroll region
 	for y := te.state.ScrollBottom; y > te.state.ScrollTop; y-- {
-		copy(te.screen.Buffer[y], te.screen.Buffer[y-1])
+		if y-1 >= 0 && y < len(screen.Buffer) && y-1 < len(screen.Buffer) {
+			copy(screen.Buffer[y], screen.Buffer[y-1])
+		}
 	}
 
-	// Clear top line
-	for x := 0; x < te.state.Width; x++ {
-		te.screen.Buffer[te.state.ScrollTop][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+	// Clear top line of scroll region
+	if te.state.ScrollTop >= 0 && te.state.ScrollTop < len(screen.Buffer) {
+		for x := 0; x < te.state.Width && x < len(screen.Buffer[te.state.ScrollTop]); x++ {
+			screen.Buffer[te.state.ScrollTop][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		}
 	}
 }
 
@@ -1199,36 +1364,38 @@ func (te *TerminalEmulator) backspace() {
 func (te *TerminalEmulator) deleteChar(count int) {
 	y := te.state.CursorY
 	x := te.state.CursorX
+	screen := te.GetScreen()
 
 	// Shift characters left
 	for i := x; i < te.state.Width-count; i++ {
-		te.screen.Buffer[y][i] = te.screen.Buffer[y][i+count]
+		screen.Buffer[y][i] = screen.Buffer[y][i+count]
 	}
 
 	// Clear rightmost characters
 	for i := te.state.Width - count; i < te.state.Width; i++ {
-		te.screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
 
-	te.screen.Dirty = true
+	screen.Dirty = true
 }
 
 // insertChar inserts blank characters at cursor position
 func (te *TerminalEmulator) insertChar(count int) {
 	y := te.state.CursorY
 	x := te.state.CursorX
+	screen := te.GetScreen()
 
 	// Shift characters right
 	for i := te.state.Width - 1; i >= x+count; i-- {
-		te.screen.Buffer[y][i] = te.screen.Buffer[y][i-count]
+		screen.Buffer[y][i] = screen.Buffer[y][i-count]
 	}
 
 	// Clear inserted characters
 	for i := x; i < x+count && i < te.state.Width; i++ {
-		te.screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[y][i] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
 
-	te.screen.Dirty = true
+	screen.Dirty = true
 }
 
 // setScrollRegion sets the scroll region
@@ -1239,41 +1406,51 @@ func (te *TerminalEmulator) setScrollRegion(region ScrollRegion) {
 
 // clearFromCursor clears from cursor to end of screen
 func (te *TerminalEmulator) clearFromCursor() {
+	screen := te.GetScreen()
+	
 	// Clear from cursor to end of current line
 	for x := te.state.CursorX; x < te.state.Width; x++ {
-		te.screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
 
 	// Clear all lines below current line
 	for y := te.state.CursorY + 1; y < te.state.Height; y++ {
 		for x := 0; x < te.state.Width; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
 }
 
 // clearToCursor clears from beginning of screen to cursor
 func (te *TerminalEmulator) clearToCursor() {
+	screen := te.GetScreen()
+	
 	// Clear all lines above current line
 	for y := 0; y < te.state.CursorY; y++ {
 		for x := 0; x < te.state.Width; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
 
 	// Clear from beginning of current line to cursor
 	for x := 0; x <= te.state.CursorX; x++ {
-		te.screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 	}
 }
 
 // clearEntireScreen clears the entire screen
 func (te *TerminalEmulator) clearEntireScreen() {
-	for y := 0; y < te.state.Height; y++ {
-		for x := 0; x < te.state.Width; x++ {
-			te.screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+	screen := te.GetScreen()
+	
+	for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
+		for x := 0; x < te.state.Width && x < len(screen.Buffer[y]); x++ {
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
 		}
 	}
+	
+	// Also reset scroll region when clearing entire screen
+	te.state.ScrollTop = 0
+	te.state.ScrollBottom = te.state.Height - 1
 }
 
 // Resize resizes the terminal
@@ -1282,21 +1459,28 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 		return fmt.Errorf("invalid dimensions: %dx%d", width, height)
 	}
 
-	// Create new screen buffer
-	newScreen := NewScreen(width, height)
-
-	// Copy existing content
-	copyHeight := min(height, te.screen.Height)
-	copyWidth := min(width, te.screen.Width)
-
-	for y := 0; y < copyHeight; y++ {
-		for x := 0; x < copyWidth; x++ {
-			newScreen.Buffer[y][x] = te.screen.Buffer[y][x]
+	// Helper function to resize a screen buffer
+	resizeScreen := func(oldScreen *Screen) *Screen {
+		newScreen := NewScreen(width, height)
+		
+		// Copy existing content
+		copyHeight := min(height, oldScreen.Height)
+		copyWidth := min(width, oldScreen.Width)
+		
+		for y := 0; y < copyHeight && y < len(oldScreen.Buffer) && y < len(newScreen.Buffer); y++ {
+			for x := 0; x < copyWidth && x < len(oldScreen.Buffer[y]) && x < len(newScreen.Buffer[y]); x++ {
+				newScreen.Buffer[y][x] = oldScreen.Buffer[y][x]
+			}
 		}
+		
+		return newScreen
 	}
 
+	// Resize both screen buffers
+	te.screen = resizeScreen(te.screen)
+	te.altScreen = resizeScreen(te.altScreen)
+	
 	// Update terminal state
-	te.screen = newScreen
 	te.state.Width = width
 	te.state.Height = height
 
@@ -1305,8 +1489,8 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	te.state.CursorY = min(te.state.CursorY, height-1)
 
 	// Adjust scroll region
-	te.state.ScrollBottom = min(te.state.ScrollBottom, height-1)
-	te.state.ScrollTop = min(te.state.ScrollTop, te.state.ScrollBottom)
+	te.state.ScrollBottom = height - 1
+	te.state.ScrollTop = 0
 
 	return nil
 }
@@ -1328,7 +1512,46 @@ func (te *TerminalEmulator) GetState() TerminalState {
 
 // GetScreen returns the terminal screen buffer
 func (te *TerminalEmulator) GetScreen() *Screen {
+	if te.useAltScreen {
+		return te.altScreen
+	}
 	return te.screen
+}
+
+// saveCursor saves the current cursor position and attributes
+func (te *TerminalEmulator) saveCursor() {
+	savedState := te.state // Create a copy
+	te.savedState = &savedState
+}
+
+// restoreCursor restores the saved cursor position and attributes
+func (te *TerminalEmulator) restoreCursor() {
+	if te.savedState != nil {
+		// Restore cursor position and attributes
+		te.state.CursorX = te.savedState.CursorX
+		te.state.CursorY = te.savedState.CursorY
+		te.state.Attributes = te.savedState.Attributes
+	}
+}
+
+// switchAltScreen switches between main and alternative screen buffers
+func (te *TerminalEmulator) switchAltScreen(useAlt bool) {
+	if useAlt && !te.useAltScreen {
+		// Switch to alternative screen
+		te.useAltScreen = true
+		// Save cursor position
+		te.saveCursor()
+		// Clear alternative screen
+		te.clearEntireScreen()
+		// Reset cursor to top-left
+		te.state.CursorX = 0
+		te.state.CursorY = 0
+	} else if !useAlt && te.useAltScreen {
+		// Switch back to normal screen
+		te.useAltScreen = false
+		// Restore cursor position
+		te.restoreCursor()
+	}
 }
 
 // SetState sets the terminal state

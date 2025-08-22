@@ -22,10 +22,10 @@ func NewRunner(serialConfig serial.SerialConfig) (*Runner, error) {
 	appConfig := DefaultAppConfig()
 	appConfig.SerialConfig = serialConfig
 
-	// Auto-detect terminal size if possible
-	// This is a simplified version - in production you'd use a proper terminal size detection
-	appConfig.TerminalWidth = 80
-	appConfig.TerminalHeight = 24
+	// Don't set fixed size - let the app detect from actual terminal
+	// Setting to 0 will make the app use the actual terminal size
+	appConfig.TerminalWidth = 0
+	appConfig.TerminalHeight = 0
 
 	return &Runner{
 		config: appConfig,

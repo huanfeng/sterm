@@ -198,9 +198,15 @@ func (app *Application) initializeComponents() error {
 
 	app.screen = screen
 
-	// Get terminal dimensions
+	// Get actual terminal dimensions from tcell screen
 	width, height := screen.Size()
-	if app.config.TerminalWidth > 0 && app.config.TerminalHeight > 0 {
+	// Only override if config explicitly sets non-zero values
+	// Otherwise use the actual terminal size
+	if app.config.TerminalWidth <= 0 || app.config.TerminalHeight <= 0 {
+		app.config.TerminalWidth = width
+		app.config.TerminalHeight = height
+	} else {
+		// Use configured size if explicitly set
 		width = app.config.TerminalWidth
 		height = app.config.TerminalHeight
 	}
@@ -292,6 +298,19 @@ func (app *Application) Start() error {
 
 	// Set running state
 	app.isRunning = true
+	
+	// Send initial terminal size to remote device
+	width, height := app.screen.Size()
+	if app.serialPort != nil && app.serialPort.IsOpen() {
+		// Send terminal type
+		app.serialPort.Write([]byte("\x1b[?1;2c")) // VT100 with AVO
+		
+		// Send window size
+		sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+		app.serialPort.Write([]byte(sizeSeq))
+		
+		app.logDebug("Sent initial terminal size %dx%d to remote", width, height)
+	}
 
 	// Start data flow goroutines
 	app.wg.Add(3)
@@ -628,6 +647,17 @@ func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
 func (app *Application) handleResize() {
 	width, height := app.screen.Size()
 	app.terminal.Resize(width, height)
+	
+	// Send terminal size update to remote device
+	// This sends the TIOCSWINSZ equivalent over serial
+	// Format: ESC[8;<height>;<width>t
+	if app.serialPort != nil && app.serialPort.IsOpen() && !app.isPaused {
+		sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", height, width)
+		app.serialPort.Write([]byte(sizeSeq))
+		
+		app.logDebug("Window resized to %dx%d, sent size update to remote", width, height)
+	}
+	
 	app.screen.Clear()
 	app.updateDisplay()
 }
