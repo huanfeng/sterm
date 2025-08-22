@@ -287,23 +287,11 @@ func (d *UTF8Decoder) Decode(b byte) (rune, bool) {
 
 			if d.expected == 0 {
 				// Complete character
-				// Log before decoding - make a copy to ensure we see the actual bytes
-				bytesCopy := make([]byte, len(d.bytes))
-				copy(bytesCopy, d.bytes)
-				if d.logger != nil {
-					d.logger.Debugf("UTF8Decoder: Decoding complete sequence: %X (len=%d)",
-						bytesCopy, len(bytesCopy))
-				}
-				r, size := decodeUTF8(bytesCopy) // Use the copy to avoid any modification issues
-				// Debug: log what we're decoding
+				r, size := decodeUTF8(d.bytes)
 				if size > 0 {
 					// Successfully decoded
-					if d.logger != nil {
-						d.logger.Debugf("UTF8Decoder: Decoded to U+%04X from bytes %X (decimal: %d)", r, bytesCopy, r)
-					}
-					result := r
 					d.Reset()
-					return result, true
+					return r, true
 				} else {
 					// Failed to decode
 					d.Reset()
@@ -1300,58 +1288,50 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 		te.historyManager.Write(output, history.DirectionInput)
 	}
 
-	// Debug log the raw bytes received and decoder state
-	if len(output) > 0 {
-		hexBytes := fmt.Sprintf("%X", output)
-		te.logDebug("UTF-8 Raw bytes received (%d bytes): %s", len(output), hexBytes)
-		te.logDebug("Decoder state at start: buffered=%X, expected=%d, decoder_ptr=%p",
-			te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
-	}
+	// Debug log the raw bytes received and decoder state (disabled for performance)
+	// Uncomment for debugging UTF-8 issues
+	// if len(output) > 0 {
+	// 	hexBytes := fmt.Sprintf("%X", output)
+	// 	te.logDebug("UTF-8 Raw bytes received (%d bytes): %s", len(output), hexBytes)
+	// 	te.logDebug("Decoder state at start: buffered=%X, expected=%d, decoder_ptr=%p",
+	// 		te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
+	// }
 
 	// Process the output
 	i := 0
 	for i < len(output) {
 		b := output[i]
 
-		// Debug logging for escape sequences
-		if te.parser.State != StateGround {
-			// In escape sequence processing
-			if b >= 0x20 && b < 0x7F {
-				te.logDebug("ESC seq byte %d: 0x%02X '%c' state=%d", i, b, b, te.parser.State)
-			} else {
-				te.logDebug("ESC seq byte %d: 0x%02X state=%d", i, b, te.parser.State)
-			}
-		}
+		// Debug logging for escape sequences (disabled for performance)
+		// if te.parser.State != StateGround {
+		// 	// In escape sequence processing
+		// 	if b >= 0x20 && b < 0x7F {
+		// 		te.logDebug("ESC seq byte %d: 0x%02X '%c' state=%d", i, b, b, te.parser.State)
+		// 	} else {
+		// 		te.logDebug("ESC seq byte %d: 0x%02X state=%d", i, b, te.parser.State)
+		// 	}
+		// }
 
-		// Special debug for backspace sequences
-		if b == 0x08 {
-			te.logDebug("Processing BACKSPACE (0x08) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
-		} else if b == 0x20 && i > 0 && output[i-1] == 0x08 {
-			te.logDebug("Processing SPACE after BACKSPACE at byte[%d]", i)
-		} else if b == 0x7F {
-			te.logDebug("Processing DEL (0x7F) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
-		}
+		// Special debug for backspace sequences (disabled for performance)
+		// if b == 0x08 {
+		// 	te.logDebug("Processing BACKSPACE (0x08) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
+		// } else if b == 0x20 && i > 0 && output[i-1] == 0x08 {
+		// 	te.logDebug("Processing SPACE after BACKSPACE at byte[%d]", i)
+		// } else if b == 0x7F {
+		// 	te.logDebug("Processing DEL (0x7F) at byte[%d], cursor at (%d, %d)", i, te.state.CursorX, te.state.CursorY)
+		// }
 
-		// Debug what byte we're processing - only log non-ASCII for less verbosity
-		if b >= 0x80 || b < 0x20 {
-			te.logDebug("Processing byte[%d]: 0x%02X, parser state=%d, decoder: buffered=%X, expected=%d",
-				i, b, te.parser.State, te.utf8Decoder.bytes, te.utf8Decoder.expected)
-		}
+		// Debug what byte we're processing (disabled for performance)
+		// if b >= 0x80 || b < 0x20 {
+		// 	te.logDebug("Processing byte[%d]: 0x%02X, parser state=%d, decoder: buffered=%X, expected=%d",
+		// 		i, b, te.parser.State, te.utf8Decoder.bytes, te.utf8Decoder.expected)
+		// }
 
 		// If in ground state and this could be UTF-8, use custom decoder
 		if te.parser.State == StateGround && b >= 0x80 {
 			// Always use custom decoder for UTF-8 to handle partial sequences
-			prevBuffered := make([]byte, len(te.utf8Decoder.bytes))
-			copy(prevBuffered, te.utf8Decoder.bytes)
-			prevExpected := te.utf8Decoder.expected
-
 			if r, complete := te.utf8Decoder.Decode(b); complete && r != 0 {
-				te.logDebug("UTF-8 decoded: rune=U+%04X '%c' from byte 0x%02X (was buffered: %X, expected: %d)", r, r, b, prevBuffered, prevExpected)
 				te.executeAction(Action{Type: ActionPrint, Data: r})
-			} else if !complete {
-				te.logDebug("UTF-8 partial byte 0x%02X buffered, expected=%d, buffered=%X", b, te.utf8Decoder.expected, te.utf8Decoder.bytes)
-			} else {
-				te.logDebug("UTF-8 decode failed for byte 0x%02X", b)
 			}
 			i++
 			continue
@@ -1362,18 +1342,18 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 
 		// Execute actions
 		for _, action := range actions {
-			te.logDebug("Executing action: %v", action.Type)
+			// te.logDebug("Executing action: %v", action.Type)
 			te.executeAction(action)
 		}
 
 		i++
 	}
 
-	// Log decoder state at end
-	if len(output) > 0 && te.utf8Decoder.expected > 0 {
-		te.logDebug("Decoder state at end: buffered=%X, expected=%d, decoder_ptr=%p",
-			te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
-	}
+	// Log decoder state at end (disabled for performance)
+	// if len(output) > 0 && te.utf8Decoder.expected > 0 {
+	// 	te.logDebug("Decoder state at end: buffered=%X, expected=%d, decoder_ptr=%p",
+	// 		te.utf8Decoder.bytes, te.utf8Decoder.expected, te.utf8Decoder)
+	// }
 
 	return nil
 }
@@ -1411,9 +1391,9 @@ func (te *TerminalEmulator) executeAction(action Action) {
 	case ActionCarriageReturn:
 		te.carriageReturn()
 	case ActionBackspace:
-		te.logDebug("Executing backspace action at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
+		// te.logDebug("Executing backspace action at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
 		te.backspace()
-		te.logDebug("After backspace, cursor at (%d, %d)", te.state.CursorX, te.state.CursorY)
+		// te.logDebug("After backspace, cursor at (%d, %d)", te.state.CursorX, te.state.CursorY)
 	case ActionDeleteChar:
 		te.deleteChar(action.Data.(int))
 	case ActionInsertChar:
@@ -1494,10 +1474,10 @@ func (te *TerminalEmulator) printChar(ch rune) {
 	// Calculate character width
 	charWidth := runeWidth(ch)
 
-	// Debug logging for backspace sequence handling
-	if ch == ' ' {
-		te.logDebug("Printing space at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
-	}
+	// Debug logging for backspace sequence handling (disabled for performance)
+	// if ch == ' ' {
+	// 	te.logDebug("Printing space at cursor pos (%d, %d)", te.state.CursorX, te.state.CursorY)
+	// }
 
 	// For zero-width characters, don't advance cursor
 	if charWidth == 0 {
