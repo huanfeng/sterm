@@ -2517,8 +2517,27 @@ func (kh *KeyHandler) handleSpecialKey(key tcell.Key, mods tcell.ModMask) []byte
 	return nil
 }
 
-// handleFunctionKey handles function keys F1-F12
+// handleFunctionKey handles function keys F1-F12 with full modifier support
 func (kh *KeyHandler) handleFunctionKey(key tcell.Key, mods tcell.ModMask) []byte {
+	// For F1-F4 with modifiers, use xterm-style sequences
+	if mods != 0 && key >= tcell.KeyF1 && key <= tcell.KeyF4 {
+		// Calculate modifier value
+		modValue := 1
+		if mods&tcell.ModShift != 0 {
+			modValue += 1
+		}
+		if mods&tcell.ModAlt != 0 {
+			modValue += 2
+		}
+		if mods&tcell.ModCtrl != 0 {
+			modValue += 4
+		}
+		
+		// F1-F4 with modifiers: ESC[1;modifierP/Q/R/S
+		letter := []byte{'P', 'Q', 'R', 'S'}[key-tcell.KeyF1]
+		return []byte{0x1B, '[', '1', ';', byte('0' + modValue), letter}
+	}
+	
 	var base []byte
 
 	switch key {
@@ -2550,11 +2569,40 @@ func (kh *KeyHandler) handleFunctionKey(key tcell.Key, mods tcell.ModMask) []byt
 		return nil
 	}
 
-	// Add modifiers if present
-	if mods != 0 {
-		return kh.addModifiers(base, mods)
+	// Add modifiers for F5-F12 if present
+	if mods != 0 && key >= tcell.KeyF5 {
+		return kh.addFunctionKeyModifiers(base, mods)
 	}
 
+	return base
+}
+
+// addFunctionKeyModifiers adds modifier to function key sequences (F5-F12)
+func (kh *KeyHandler) addFunctionKeyModifiers(base []byte, mods tcell.ModMask) []byte {
+	// Calculate modifier value
+	modValue := 1
+	if mods&tcell.ModShift != 0 {
+		modValue += 1
+	}
+	if mods&tcell.ModAlt != 0 {
+		modValue += 2
+	}
+	if mods&tcell.ModCtrl != 0 {
+		modValue += 4
+	}
+	
+	if modValue == 1 {
+		return base // No modifiers
+	}
+	
+	// For sequences like ESC[15~, convert to ESC[15;2~ for modified version
+	if len(base) >= 4 && base[0] == 0x1B && base[1] == '[' && base[len(base)-1] == '~' {
+		result := make([]byte, 0, len(base)+3)
+		result = append(result, base[:len(base)-1]...)  // Everything except ~
+		result = append(result, ';', byte('0'+modValue), '~') // Add ;modifier~
+		return result
+	}
+	
 	return base
 }
 
