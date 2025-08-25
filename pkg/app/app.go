@@ -12,6 +12,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"serial-terminal/pkg/config"
 	"serial-terminal/pkg/history"
+	"serial-terminal/pkg/menu"
 	"serial-terminal/pkg/serial"
 	"serial-terminal/pkg/terminal"
 )
@@ -26,8 +27,10 @@ type Application struct {
 	inputProcessor *terminal.InputProcessor // Keep single instance for state
 
 	// UI components
-	screen    tcell.Screen
-	shortcuts *terminal.ShortcutManager
+	screen        tcell.Screen
+	shortcuts     *terminal.ShortcutManager
+	mainMenu      *menu.Menu
+	overlayMgr    *menu.OverlayManager
 
 	// Session management
 	session *Session
@@ -62,11 +65,13 @@ type AppConfig struct {
 	SendWindowSizeOnConnect bool   // Send window size when connecting
 	SendWindowSizeOnResize  bool   // Send window size when resizing
 	TerminalType            string // Terminal type to report (vt100, xterm, etc.)
+	Version                 string // Application version
 }
 
 // DefaultAppConfig returns default application configuration
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
+		Version: "1.0.0",
 		SerialConfig:            serial.DefaultConfig(),
 		TerminalWidth:           80,
 		TerminalHeight:          24,
@@ -261,6 +266,11 @@ func (app *Application) initializeComponents() error {
 	// Create shortcut manager
 	app.shortcuts = terminal.NewShortcutManager()
 	app.setupShortcuts()
+
+	// Create menu system
+	app.overlayMgr = menu.NewOverlayManager(app.screen)
+	app.mainMenu = menu.NewMenu("Serial Terminal", app.screen)
+	app.setupMenu()
 
 	return nil
 }
@@ -589,6 +599,13 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 	// 	app.logDebug("Key: Key=%v, Mods=%v", ev.Key(), ev.Modifiers())
 	// }
 
+	// Check if menu is visible and handle its input first
+	if app.mainMenu != nil && app.mainMenu.IsVisible() {
+		if app.mainMenu.HandleKey(ev) {
+			return
+		}
+	}
+
 	// Check for exit combinations
 	// Key=17 is tcell.KeyCtrlQ
 	// Mods=3 means Ctrl+Shift (1+2=3)
@@ -628,10 +645,11 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
-	// Check for F1 help key
+	// Check for F1 menu key
 	if ev.Key() == tcell.KeyF1 {
-		app.logDebug("F1 help key pressed")
-		// TODO: Show help
+		app.logDebug("F1 menu key pressed")
+		app.showMainMenu()
+		return
 	}
 
 	// Check for F8 pause/resume
@@ -1274,4 +1292,226 @@ func convertColor(color terminal.Color) tcell.Color {
 // generateSessionID generates a unique session ID
 func generateSessionID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+// setupMenu initializes the main menu
+func (app *Application) setupMenu() {
+	// Session Management
+	app.mainMenu.AddItem("Clear Screen", "Ctrl+L", func() error {
+		app.logDebug("Menu: Clear Screen")
+		app.terminal.Clear()
+		app.updateDisplay()
+		return nil
+	})
+
+	app.mainMenu.AddItem("Clear History", "Ctrl+K", func() error {
+		app.logDebug("Menu: Clear History")
+		app.terminal.ClearScrollback()
+		app.updateDisplay()
+		return nil
+	})
+
+	app.mainMenu.AddSeparator()
+
+	// File Operations
+	app.mainMenu.AddItem("Save Session", "Ctrl+S", func() error {
+		app.logDebug("Menu: Save Session")
+		return app.saveSessionToFile()
+	})
+
+	app.mainMenu.AddSeparator()
+
+	// Connection
+	app.mainMenu.AddItem("Reconnect", "Ctrl+R", func() error {
+		app.logDebug("Menu: Reconnect")
+		return app.reconnect()
+	})
+
+	app.mainMenu.AddSeparator()
+
+	// View Control
+	app.mainMenu.AddItem("Toggle Line Wrap", "Ctrl+W", func() error {
+		app.logDebug("Menu: Toggle Line Wrap")
+		// TODO: Implement line wrap toggle
+		return nil
+	})
+
+	app.mainMenu.AddItem("Toggle Local Echo", "Ctrl+E", func() error {
+		app.logDebug("Menu: Toggle Local Echo")
+		// TODO: Implement local echo toggle
+		return nil
+	})
+
+	app.mainMenu.AddSeparator()
+
+	// Help
+	app.mainMenu.AddItem("About", "F3", func() error {
+		app.logDebug("Menu: About")
+		app.showAbout()
+		return nil
+	})
+
+	app.mainMenu.AddItem("Exit", "Ctrl+Q", func() error {
+		app.logDebug("Menu: Exit")
+		go func() {
+			app.Stop()
+		}()
+		return nil
+	})
+
+	// Set close callback to restore screen
+	app.mainMenu.SetOnClose(func() {
+		app.overlayMgr.RestoreScreen()
+	})
+}
+
+// showMainMenu displays the main menu
+func (app *Application) showMainMenu() {
+	if app.mainMenu == nil || app.overlayMgr == nil {
+		return
+	}
+
+	// Save current screen content
+	app.overlayMgr.SaveScreen()
+
+	// Show menu
+	app.mainMenu.Show()
+}
+
+// saveSessionToFile saves the current session to a file
+func (app *Application) saveSessionToFile() error {
+	// Generate filename with timestamp
+	filename := fmt.Sprintf("session_%s.txt", time.Now().Format("20060102_150405"))
+	
+	// Create file
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	// Write session info
+	fmt.Fprintf(file, "Serial Terminal Session\n")
+	fmt.Fprintf(file, "========================\n")
+	fmt.Fprintf(file, "Date: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(file, "Port: %s\n", app.config.SerialConfig.Port)
+	fmt.Fprintf(file, "Settings: %d %d-%s-%d\n",
+		app.config.SerialConfig.BaudRate,
+		app.config.SerialConfig.DataBits,
+		app.config.SerialConfig.Parity,
+		app.config.SerialConfig.StopBits)
+	fmt.Fprintf(file, "========================\n\n")
+
+	// Write terminal content (including scrollback)
+	lines := app.terminal.GetAllLines()
+	for _, line := range lines {
+		for _, cell := range line {
+			if cell.Char != 0 {
+				fmt.Fprintf(file, "%c", cell.Char)
+			}
+		}
+		fmt.Fprintln(file)
+	}
+
+	app.logDebug("Session saved to %s", filename)
+	
+	// Show status message
+	app.updateStatusMessage(fmt.Sprintf("Session saved to %s", filename))
+	
+	return nil
+}
+
+// reconnect disconnects and reconnects to the serial port
+func (app *Application) reconnect() error {
+	app.logDebug("Reconnecting...")
+	
+	// Close current connection
+	if app.serialPort != nil && app.serialPort.IsOpen() {
+		app.serialPort.Close()
+	}
+
+	// Small delay
+	time.Sleep(500 * time.Millisecond)
+
+	// Reopen connection
+	err := app.serialPort.Open(app.config.SerialConfig)
+	if err != nil {
+		return fmt.Errorf("failed to reconnect: %w", err)
+	}
+
+	// Clear terminal
+	app.terminal.Clear()
+	
+	// Update status
+	app.updateStatusMessage("Reconnected successfully")
+	
+	return nil
+}
+
+// showAbout displays about information
+func (app *Application) showAbout() {
+	aboutText := fmt.Sprintf("Serial Terminal v%s\n\nA modern serial port terminal emulator\n\nPress any key to continue...", app.config.Version)
+	
+	// Clear screen and show about
+	width, height := app.screen.Size()
+	style := tcell.StyleDefault.Background(tcell.ColorDarkBlue).Foreground(tcell.ColorWhite)
+	
+	// Draw box
+	boxWidth := 50
+	boxHeight := 8
+	startX := (width - boxWidth) / 2
+	startY := (height - boxHeight) / 2
+	
+	// Draw background
+	for y := startY; y < startY+boxHeight; y++ {
+		for x := startX; x < startX+boxWidth; x++ {
+			app.screen.SetContent(x, y, ' ', nil, style)
+		}
+	}
+	
+	// Draw border
+	// Top
+	app.screen.SetContent(startX, startY, '┌', nil, style)
+	app.screen.SetContent(startX+boxWidth-1, startY, '┐', nil, style)
+	for x := startX + 1; x < startX+boxWidth-1; x++ {
+		app.screen.SetContent(x, startY, '─', nil, style)
+	}
+	
+	// Sides
+	for y := startY + 1; y < startY+boxHeight-1; y++ {
+		app.screen.SetContent(startX, y, '│', nil, style)
+		app.screen.SetContent(startX+boxWidth-1, y, '│', nil, style)
+	}
+	
+	// Bottom
+	app.screen.SetContent(startX, startY+boxHeight-1, '└', nil, style)
+	app.screen.SetContent(startX+boxWidth-1, startY+boxHeight-1, '┘', nil, style)
+	for x := startX + 1; x < startX+boxWidth-1; x++ {
+		app.screen.SetContent(x, startY+boxHeight-1, '─', nil, style)
+	}
+	
+	// Draw text
+	lines := strings.Split(aboutText, "\n")
+	for i, line := range lines {
+		textX := startX + (boxWidth-len(line))/2
+		textY := startY + 2 + i
+		for j, ch := range line {
+			app.screen.SetContent(textX+j, textY, ch, nil, style)
+		}
+	}
+	
+	app.screen.Show()
+	
+	// Wait for key press
+	app.screen.PollEvent()
+	
+	// Restore screen
+	app.updateDisplay()
+}
+
+// updateStatusMessage shows a temporary status message
+func (app *Application) updateStatusMessage(message string) {
+	// This will be shown in the status bar temporarily
+	// For now, just log it
+	app.logDebug("Status: %s", message)
 }

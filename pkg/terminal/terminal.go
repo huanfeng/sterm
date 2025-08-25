@@ -1584,6 +1584,11 @@ func (te *TerminalEmulator) moveCursor(move CursorMove) {
 	}
 }
 
+// Clear clears the entire screen (public method)
+func (te *TerminalEmulator) Clear() {
+	te.clearScreen(2) // Clear entire screen
+}
+
 // clearScreen clears the screen
 func (te *TerminalEmulator) clearScreen(mode int) {
 	switch mode {
@@ -1827,6 +1832,21 @@ func (te *TerminalEmulator) GetScrollbackView() [][]Cell {
 func (te *TerminalEmulator) ClearScrollback() {
 	te.scrollbackBuffer = make([][]Cell, 0, te.scrollbackSize)
 	te.ExitScrollMode()
+}
+
+// GetAllLines returns all lines including scrollback buffer
+func (te *TerminalEmulator) GetAllLines() [][]Cell {
+	var allLines [][]Cell
+	
+	// Add scrollback buffer lines
+	allLines = append(allLines, te.scrollbackBuffer...)
+	
+	// Add current screen lines
+	if te.screen != nil {
+		allLines = append(allLines, te.screen.Buffer...)
+	}
+	
+	return allLines
 }
 
 // setMode sets terminal mode
