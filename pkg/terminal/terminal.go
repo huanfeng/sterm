@@ -1940,6 +1940,8 @@ func (te *TerminalEmulator) backspace() {
 		// Don't try to be smart about wide characters here
 		// The terminal echo will handle the actual deletion properly
 		te.state.CursorX--
+		// Mark screen as dirty to update cursor position
+		te.GetScreen().Dirty = true
 	}
 }
 
