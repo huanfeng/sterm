@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -360,9 +359,13 @@ func (app *Application) setupShortcuts() {
 		return app.Disconnect()
 	})
 
-	// Help shortcut
+	// Help shortcut - show main menu which contains help and options
 	app.shortcuts.SetShortcutHandler("help", func() error {
-		app.ShowHelp()
+		if app.mainMenu != nil && app.mainMenu.IsVisible() {
+			app.hideMainMenu()
+		} else {
+			app.showMainMenu()
+		}
 		return nil
 	})
 }
@@ -425,9 +428,8 @@ func (app *Application) Start() error {
 	}
 
 	// Start data flow goroutines
-	app.wg.Add(3)
+	app.wg.Add(2)
 	go app.handleSerialInput()
-	go app.handleSerialOutput()
 	go app.handleUserInput()
 
 	// Start UI update loop
@@ -562,14 +564,6 @@ func (app *Application) handleSerialInput() {
 	}
 }
 
-// handleSerialOutput reads data from terminal and sends to serial port
-func (app *Application) handleSerialOutput() {
-	defer app.wg.Done()
-
-	// This would typically receive data from terminal input
-	// For now, we'll handle it in handleUserInput
-}
-
 // handleUserInput handles keyboard and mouse input
 func (app *Application) handleUserInput() {
 	defer app.wg.Done()
@@ -693,15 +687,10 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
-	// Check for F1 menu key (toggle menu)
+	// Check for F1 key first - let shortcuts handle it if defined
 	if ev.Key() == tcell.KeyF1 {
-		app.logDebug("F1 menu key pressed")
-		if app.mainMenu != nil && app.mainMenu.IsVisible() {
-			app.hideMainMenu()
-		} else {
-			app.showMainMenu()
-		}
-		return
+		app.logDebug("F1 key pressed - will be handled by shortcuts if enabled")
+		// Don't return here - let it fall through to shortcut processing
 	}
 
 	// Check for F8 pause/resume
@@ -1300,57 +1289,6 @@ func (app *Application) Disconnect() error {
 	}
 
 	return nil
-}
-
-// ShowHelp displays help information in the terminal
-func (app *Application) ShowHelp() {
-	helpText := `
-╔════════════════════════════════════════╗
-║        Serial Terminal Help            ║
-╠════════════════════════════════════════╣
-║ Shortcuts:                             ║
-║   Ctrl+Shift+Q : Exit                  ║
-║   (or Ctrl+Q)                          ║
-║   Ctrl+Shift+S : Save history          ║
-║   Ctrl+Shift+C : Clear screen          ║
-║   F1          : Show this help         ║
-║   F8          : Pause/Resume data flow ║
-╠════════════════════════════════════════╣
-║ Press any key to continue...           ║
-╚════════════════════════════════════════╝
-`
-	// Save current screen content
-	width, height := app.screen.Size()
-
-	// Clear and show help
-	app.screen.Clear()
-	lines := strings.Split(helpText, "\n")
-	startY := (height - len(lines)) / 2
-	if startY < 0 {
-		startY = 0
-	}
-
-	for i, line := range lines {
-		if startY+i >= height {
-			break
-		}
-		startX := (width - len(line)) / 2
-		if startX < 0 {
-			startX = 0
-		}
-		for j, ch := range line {
-			if startX+j < width {
-				app.screen.SetContent(startX+j, startY+i, ch, nil, tcell.StyleDefault)
-			}
-		}
-	}
-	app.screen.Show()
-
-	// Wait for any key
-	app.screen.PollEvent()
-
-	// Restore screen
-	app.updateDisplay()
 }
 
 // Reconnect reconnects to the serial port
