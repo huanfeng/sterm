@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"serial-terminal/pkg/serial"
+	"sterm/pkg/serial"
 	"strings"
 	"time"
 )
@@ -67,9 +67,9 @@ func NewFileConfigManager(configDir string) *FileConfigManager {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			// Fallback to current directory
-			configDir = ".serial-terminal"
+			configDir = ".sterm"
 		} else {
-			configDir = filepath.Join(homeDir, ".serial-terminal")
+			configDir = filepath.Join(homeDir, ".sterm")
 		}
 	}
 

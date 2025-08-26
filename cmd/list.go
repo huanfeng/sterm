@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"sterm/pkg/serial"
+
 	"github.com/spf13/cobra"
-	"serial-terminal/pkg/serial"
 )
 
 var (
@@ -18,7 +19,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List available serial ports",
 	Long: `List all available serial ports on the system.
-	
+
 This command scans the system for available serial ports and displays
 them in a formatted list. On different platforms:
   - Windows: Lists COM ports
@@ -87,7 +88,7 @@ func printPortsTable(portInfos []serial.PortInfo) {
 		}
 	}
 
-	fmt.Println("\nUse 'serial-terminal connect <port>' or 'serial-terminal c <port>' to connect.")
+	fmt.Println("\nUse 'sterm connect <port>' or 'sterm c <port>' to connect.")
 }
 
 func printPortsCSV(portInfos []serial.PortInfo) {

@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"sterm/pkg/app"
+	"sterm/pkg/config"
+	"sterm/pkg/serial"
+
 	"github.com/spf13/cobra"
-	"serial-terminal/pkg/app"
-	"serial-terminal/pkg/config"
-	"serial-terminal/pkg/serial"
 )
 
 var (
@@ -31,20 +32,20 @@ var connectCmd = &cobra.Command{
 	Use:   "connect <port|config>",
 	Short: "Connect to a serial port",
 	Long: `Connect to a serial port directly or using a saved configuration.
-	
+
 You can specify either:
   - A port name (e.g., COM3, /dev/ttyUSB0) with optional parameters
   - A saved configuration name
-	
+
 Examples:
   # Connect to COM3 with default settings
-  serial-terminal connect COM3
-  
+  sterm connect COM3
+
   # Connect to /dev/ttyUSB0 with custom baud rate
-  serial-terminal connect /dev/ttyUSB0 -b 9600
-  
+  sterm connect /dev/ttyUSB0 -b 9600
+
   # Connect using a saved configuration
-  serial-terminal connect mydevice`,
+  sterm connect mydevice`,
 	Args:    cobra.ExactArgs(1),
 	Aliases: []string{"c", "open"},
 	Run:     runConnect,
@@ -212,7 +213,7 @@ func testConnection(cfg serial.SerialConfig) {
 
 		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such") {
 			fmt.Fprintf(os.Stderr, "  - The specified port does not exist\n")
-			fmt.Fprintf(os.Stderr, "  - Use 'serial-terminal list' to see available ports\n")
+			fmt.Fprintf(os.Stderr, "  - Use 'sterm list' to see available ports\n")
 		}
 
 		os.Exit(1)

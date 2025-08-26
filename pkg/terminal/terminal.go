@@ -3,8 +3,8 @@ package terminal
 
 import (
 	"fmt"
-	"serial-terminal/pkg/history"
-	"serial-terminal/pkg/serial"
+	"sterm/pkg/history"
+	"sterm/pkg/serial"
 	"sync"
 
 	"github.com/gdamore/tcell/v2"

@@ -6,10 +6,11 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"sterm/pkg/app"
+	"sterm/pkg/config"
+	"sterm/pkg/serial"
+
 	"github.com/spf13/cobra"
-	"serial-terminal/pkg/app"
-	"serial-terminal/pkg/config"
-	"serial-terminal/pkg/serial"
 )
 
 var (
@@ -27,7 +28,7 @@ var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage serial port configurations",
 	Long: `Manage saved serial port configurations.
-	
+
 This command allows you to save, load, list, and delete serial port
 configurations for quick access to frequently used settings.`,
 }
@@ -37,9 +38,9 @@ var saveCmd = &cobra.Command{
 	Use:   "save <name>",
 	Short: "Save a serial port configuration",
 	Long: `Save the current serial port configuration with a given name.
-	
+
 Example:
-  serial-terminal config save mydevice -p COM3 -b 115200`,
+  sterm config save mydevice -p COM3 -b 115200`,
 	Args: cobra.ExactArgs(1),
 	Run:  runSaveConfig,
 }
@@ -49,9 +50,9 @@ var loadCmd = &cobra.Command{
 	Use:   "load <name>",
 	Short: "Load and connect using a saved configuration",
 	Long: `Load a saved configuration and immediately connect to the serial port.
-	
+
 Example:
-  serial-terminal config load mydevice`,
+  sterm config load mydevice`,
 	Args: cobra.ExactArgs(1),
 	Run:  runLoadConfig,
 }
@@ -69,9 +70,9 @@ var deleteCmd = &cobra.Command{
 	Use:   "delete <name>",
 	Short: "Delete a saved configuration",
 	Long: `Delete a saved serial port configuration.
-	
+
 Example:
-  serial-terminal config delete mydevice`,
+  sterm config delete mydevice`,
 	Aliases: []string{"rm", "remove"},
 	Args:    cobra.ExactArgs(1),
 	Run:     runDeleteConfig,
@@ -82,9 +83,9 @@ var showCmd = &cobra.Command{
 	Use:   "show <name>",
 	Short: "Show details of a saved configuration",
 	Long: `Display detailed information about a saved configuration.
-	
+
 Example:
-  serial-terminal config show mydevice`,
+  sterm config show mydevice`,
 	Args: cobra.ExactArgs(1),
 	Run:  runShowConfig,
 }
@@ -174,7 +175,7 @@ func runListConfigs(cmd *cobra.Command, args []string) {
 
 	if len(configs) == 0 {
 		fmt.Println("No saved configurations found.")
-		fmt.Println("\nUse 'serial-terminal config save <name>' to save a configuration.")
+		fmt.Println("\nUse 'sterm config save <name>' to save a configuration.")
 		return
 	}
 
@@ -203,8 +204,8 @@ func runListConfigs(cmd *cobra.Command, args []string) {
 
 	w.Flush()
 
-	fmt.Println("\nUse 'serial-terminal config load <name>' to connect using a configuration.")
-	fmt.Println("Use 'serial-terminal config show <name>' to see full details.")
+	fmt.Println("\nUse 'sterm config load <name>' to connect using a configuration.")
+	fmt.Println("Use 'sterm config show <name>' to see full details.")
 }
 
 func runDeleteConfig(cmd *cobra.Command, args []string) {
@@ -263,7 +264,7 @@ func runShowConfig(cmd *cobra.Command, args []string) {
 		fmt.Printf("Last Used:   Never\n")
 	}
 
-	fmt.Println("\nUse 'serial-terminal config load " + name + "' to connect using this configuration.")
+	fmt.Println("\nUse 'sterm config load " + name + "' to connect using this configuration.")
 }
 
 func repeatString(s string, count int) string {

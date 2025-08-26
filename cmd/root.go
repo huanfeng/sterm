@@ -14,7 +14,7 @@ var (
 
 	// Root command
 	rootCmd = &cobra.Command{
-		Use:               "serial-terminal",
+		Use:               "sterm",
 		Short:             "A cross-platform serial port terminal emulator",
 		Version:           "1.0.0",
 		Run:               runTerminal,

@@ -3,10 +3,10 @@ package ui
 
 import (
 	"fmt"
-	"serial-terminal/pkg/config"
-	"serial-terminal/pkg/history"
-	"serial-terminal/pkg/serial"
-	"serial-terminal/pkg/terminal"
+	"sterm/pkg/config"
+	"sterm/pkg/history"
+	"sterm/pkg/serial"
+	"sterm/pkg/terminal"
 	"time"
 )
 
@@ -170,7 +170,7 @@ func DefaultApplicationConfig() ApplicationConfig {
 		TerminalHeight:      24,
 		AutoSaveHistory:     true,
 		LogLevel:            "info",
-		ConfigDir:           ".serial-terminal",
+		ConfigDir:           ".sterm",
 	}
 }
 

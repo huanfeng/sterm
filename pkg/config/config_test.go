@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"serial-terminal/pkg/serial"
+	"sterm/pkg/serial"
 	"testing"
 	"time"
 )

@@ -1,4 +1,4 @@
-module serial-terminal
+module sterm
 
 go 1.24.2
 

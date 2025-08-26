@@ -1,11 +1,11 @@
-# justfile for serial-terminal
+# justfile for sterm
 # Cross-platform build system using just (https://github.com/casey/just)
 
 # Use PowerShell on Windows for better compatibility
 set windows-shell := ["pwsh", "-Command"]
 
 # Variables
-app_name := "serial-terminal"
+app_name := "sterm"
 version := "1.0.0"
 build_dir := "build"
 

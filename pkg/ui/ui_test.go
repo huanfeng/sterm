@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"serial-terminal/pkg/config"
-	"serial-terminal/pkg/serial"
+	"sterm/pkg/config"
+	"sterm/pkg/serial"
 	"testing"
 	"time"
 )
@@ -362,7 +362,7 @@ func TestApplicationConfig_Validate(t *testing.T) {
 				TerminalWidth:  80,
 				TerminalHeight: 24,
 				LogLevel:       "info",
-				ConfigDir:      ".serial-terminal",
+				ConfigDir:      ".sterm",
 			},
 			wantErr: true,
 		},
@@ -374,7 +374,7 @@ func TestApplicationConfig_Validate(t *testing.T) {
 				TerminalWidth:       80,
 				TerminalHeight:      24,
 				LogLevel:            "info",
-				ConfigDir:           ".serial-terminal",
+				ConfigDir:           ".sterm",
 			},
 			wantErr: true,
 		},
@@ -386,7 +386,7 @@ func TestApplicationConfig_Validate(t *testing.T) {
 				TerminalWidth:       80,
 				TerminalHeight:      24,
 				LogLevel:            "invalid",
-				ConfigDir:           ".serial-terminal",
+				ConfigDir:           ".sterm",
 			},
 			wantErr: true,
 		},
@@ -441,8 +441,8 @@ func TestDefaultApplicationConfig(t *testing.T) {
 		t.Errorf("DefaultApplicationConfig() LogLevel = %s, want info", config.LogLevel)
 	}
 
-	if config.ConfigDir != ".serial-terminal" {
-		t.Errorf("DefaultApplicationConfig() ConfigDir = %s, want .serial-terminal", config.ConfigDir)
+	if config.ConfigDir != ".sterm" {
+		t.Errorf("DefaultApplicationConfig() ConfigDir = %s, want .sterm", config.ConfigDir)
 	}
 }
 

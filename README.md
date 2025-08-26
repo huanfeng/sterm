@@ -5,7 +5,7 @@ A cross-platform serial port terminal application written in Go.
 ## Project Structure
 
 ```
-serial-terminal/
+sterm/
 ├── main.go                 # Application entry point
 ├── go.mod                  # Go module definition
 ├── pkg/                    # Package directory
@@ -33,13 +33,13 @@ serial-terminal/
 ## Build
 
 ```bash
-go build -o serial-terminal
+go build -o sterm
 ```
 
 ## Usage
 
 ```bash
-./serial-terminal --help
+./sterm --help
 ```
 
 ## Development Status

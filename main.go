@@ -1,7 +1,7 @@
 package main
 
 import (
-	"serial-terminal/cmd"
+	"sterm/cmd"
 )
 
 func main() {

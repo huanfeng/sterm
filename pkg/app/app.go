@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"serial-terminal/pkg/config"
-	"serial-terminal/pkg/history"
-	"serial-terminal/pkg/menu"
-	"serial-terminal/pkg/serial"
-	"serial-terminal/pkg/terminal"
+	"sterm/pkg/config"
+	"sterm/pkg/history"
+	"sterm/pkg/menu"
+	"sterm/pkg/serial"
+	"sterm/pkg/terminal"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
@@ -161,30 +161,30 @@ func (app *Application) Debugf(format string, args ...interface{}) {
 	app.logDebug(format, args...)
 }
 
-// createDebugLog creates debug log file in user's .serial-terminal directory
+// createDebugLog creates debug log file in user's .sterm directory
 func createDebugLog() *os.File {
 	// Get user's home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		// Fallback to current directory
-		debugLog, _ := os.Create("serial-terminal-debug.log")
+		debugLog, _ := os.Create("sterm-debug.log")
 		return debugLog
 	}
 
-	// Create .serial-terminal directory if it doesn't exist
-	serialTerminalDir := filepath.Join(homeDir, ".serial-terminal")
+	// Create .sterm directory if it doesn't exist
+	serialTerminalDir := filepath.Join(homeDir, ".sterm")
 	if err := os.MkdirAll(serialTerminalDir, 0755); err != nil {
 		// Fallback to current directory
-		debugLog, _ := os.Create("serial-terminal-debug.log")
+		debugLog, _ := os.Create("sterm-debug.log")
 		return debugLog
 	}
 
 	// Create debug log file in the directory
-	debugLogPath := filepath.Join(serialTerminalDir, "serial-terminal-debug.log")
+	debugLogPath := filepath.Join(serialTerminalDir, "sterm-debug.log")
 	debugLog, err := os.Create(debugLogPath)
 	if err != nil {
 		// Fallback to current directory
-		debugLog, _ = os.Create("serial-terminal-debug.log")
+		debugLog, _ = os.Create("sterm-debug.log")
 		return debugLog
 	}
 

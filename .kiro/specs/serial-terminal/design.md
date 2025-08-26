@@ -14,15 +14,15 @@ graph TB
     App --> Config[配置管理器]
     App --> Terminal[终端模拟器]
     App --> History[历史管理器]
-    
+
     Terminal --> Serial[串口通信器]
     Terminal --> Display[显示渲染器]
     Terminal --> Input[输入处理器]
-    
+
     Config --> Storage[配置存储]
     History --> Buffer[内存缓冲区]
     History --> FileWriter[文件写入器]
-    
+
     Serial --> Platform[平台适配层]
     Platform --> Windows[Windows COM]
     Platform --> Linux[Linux TTY]
@@ -103,7 +103,7 @@ type ConfigInfo struct {
 }
 ```
 
-**设计决策：** 使用 JSON 格式存储配置文件，支持配置的 CRUD 操作。配置文件存储在用户主目录的 `.serial-terminal` 文件夹中。
+**设计决策：** 使用 JSON 格式存储配置文件，支持配置的 CRUD 操作。配置文件存储在用户主目录的 `.sterm` 文件夹中。
 
 ### 4. 历史管理组件
 

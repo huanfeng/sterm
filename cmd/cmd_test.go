@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"sterm/pkg/serial"
+
 	"github.com/spf13/cobra"
-	"serial-terminal/pkg/serial"
 )
 
 // TestRootCommand tests the root command
@@ -17,8 +18,8 @@ func TestRootCommand(t *testing.T) {
 	// We can't easily test the full execution without mocking a lot
 
 	// Check basic command properties
-	if rootCmd.Use != "serial-terminal" {
-		t.Errorf("rootCmd.Use = %s, want serial-terminal", rootCmd.Use)
+	if rootCmd.Use != "sterm" {
+		t.Errorf("rootCmd.Use = %s, want sterm", rootCmd.Use)
 	}
 
 	if rootCmd.Short == "" {

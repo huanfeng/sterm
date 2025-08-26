@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"serial-terminal/pkg/serial"
+	"sterm/pkg/serial"
 )
 
 // Runner provides a high-level interface to run the terminal application

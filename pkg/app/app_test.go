@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"serial-terminal/pkg/serial"
-	"serial-terminal/pkg/terminal"
+	"sterm/pkg/serial"
+	"sterm/pkg/terminal"
 )
 
 func TestSessionManagement(t *testing.T) {
