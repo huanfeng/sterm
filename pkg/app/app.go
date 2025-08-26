@@ -9,12 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
 	"serial-terminal/pkg/config"
 	"serial-terminal/pkg/history"
 	"serial-terminal/pkg/menu"
 	"serial-terminal/pkg/serial"
 	"serial-terminal/pkg/terminal"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 // Application represents the main application controller
@@ -27,10 +28,10 @@ type Application struct {
 	inputProcessor *terminal.InputProcessor // Keep single instance for state
 
 	// UI components
-	screen        tcell.Screen
-	shortcuts     *terminal.ShortcutManager
-	mainMenu      *menu.Menu
-	overlayMgr    *menu.OverlayManager
+	screen     tcell.Screen
+	shortcuts  *terminal.ShortcutManager
+	mainMenu   *menu.Menu
+	overlayMgr *menu.OverlayManager
 
 	// Session management
 	session *Session
@@ -42,8 +43,12 @@ type Application struct {
 	mu     sync.RWMutex
 
 	// State
-	isRunning bool
-	isPaused  bool
+	isRunning     bool
+	isPaused      bool
+	localEcho     bool      // Whether to echo typed characters locally
+	lineWrap      bool      // Whether to wrap long lines
+	statusMessage string    // Temporary status message
+	statusTime    time.Time // When status message was set
 
 	// Configuration
 	config AppConfig
@@ -71,7 +76,7 @@ type AppConfig struct {
 // DefaultAppConfig returns default application configuration
 func DefaultAppConfig() AppConfig {
 	return AppConfig{
-		Version: "1.0.0",
+		Version:                 "1.0.0",
 		SerialConfig:            serial.DefaultConfig(),
 		TerminalWidth:           80,
 		TerminalHeight:          24,
@@ -172,6 +177,8 @@ func NewApplication(config AppConfig) (*Application, error) {
 		cancel:    cancel,
 		isRunning: false,
 		isPaused:  false,
+		localEcho: false, // Local echo off by default
+		lineWrap:  true,  // Line wrap on by default
 		debugLog:  debugLog,
 	}
 
@@ -240,9 +247,12 @@ func (app *Application) initializeComponents() error {
 		height,
 	)
 
+	// Set initial line wrap state
+	app.terminal.SetLineWrap(app.lineWrap)
+
 	// Set logger for terminal debugging
 	app.terminal.SetLogger(app)
-	
+
 	// Set mouse mode change callback to dynamically enable/disable mouse
 	app.terminal.SetMouseModeChangeCallback(func(mode terminal.MouseMode) {
 		if mode == terminal.MouseModeOff {
@@ -645,10 +655,14 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
-	// Check for F1 menu key
+	// Check for F1 menu key (toggle menu)
 	if ev.Key() == tcell.KeyF1 {
 		app.logDebug("F1 menu key pressed")
-		app.showMainMenu()
+		if app.mainMenu != nil && app.mainMenu.IsVisible() {
+			app.hideMainMenu()
+		} else {
+			app.showMainMenu()
+		}
 		return
 	}
 
@@ -789,12 +803,12 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 			app.terminal.ScrollToBottom()
 			handled = true
 		}
-		
+
 		if handled {
 			app.updateDisplay()
 			return
 		}
-		
+
 		// Other keys don't exit scroll mode, just ignore them
 		return
 	}
@@ -816,6 +830,12 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 	data := app.inputProcessor.ProcessKeyEvent(ev)
 
 	if len(data) > 0 && !app.isPaused {
+		// Local echo - display the input locally if enabled
+		if app.localEcho && app.terminal != nil {
+			// Process the input locally to show it on screen
+			app.terminal.ProcessOutput(data)
+		}
+
 		// Send to serial port
 		if app.serialPort != nil && app.serialPort.IsOpen() {
 			n, _ := app.serialPort.Write(data)
@@ -837,7 +857,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 func (app *Application) handleMouseEvent(ev *tcell.EventMouse) {
 	// Only process mouse events if mouse is enabled (terminal requested it)
 	mouseMode := app.terminal.GetState().MouseMode
-	
+
 	// Only process mouse events when terminal has requested mouse mode
 	if mouseMode == terminal.MouseModeOff {
 		// Mouse mode is off, don't process any mouse events
@@ -930,9 +950,16 @@ func (app *Application) updateDisplay() {
 		return
 	}
 
+	// Check if status message expired and needs redraw
+	needsRedraw := false
+	if app.statusMessage != "" && time.Since(app.statusTime) > 3*time.Second {
+		app.statusMessage = ""
+		needsRedraw = true
+	}
+
 	// Get terminal screen buffer
 	screen := app.terminal.GetScreen()
-	if screen == nil || !screen.Dirty {
+	if screen == nil || (!screen.Dirty && !needsRedraw) {
 		return
 	}
 
@@ -953,7 +980,7 @@ func (app *Application) updateDisplay() {
 	// Render each cell (leave room for status bar at bottom)
 	screenWidth, screenHeight := app.screen.Size()
 	contentHeight := screenHeight - 1 // Reserve bottom line for status bar
-	
+
 	for y := 0; y < contentHeight && y < len(buffer); y++ {
 		for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
 			cell := buffer[y][x]
@@ -991,10 +1018,10 @@ func (app *Application) updateDisplay() {
 
 	// Always show status bar at bottom
 	statusY := screenHeight - 1
-	
+
 	// Prepare status bar content
 	var statusLeft, statusCenter, statusRight string
-	
+
 	// Left: Connection info
 	if app.serialPort != nil && app.serialPort.IsOpen() {
 		cfg := app.config.SerialConfig
@@ -1002,42 +1029,45 @@ func (app *Application) updateDisplay() {
 	} else {
 		statusLeft = " Disconnected "
 	}
-	
-	// Center: Mode indicator
-	if app.terminal.IsScrolling() {
+
+	// Center: Mode indicator or temporary status message
+	if app.statusMessage != "" && time.Since(app.statusTime) < 3*time.Second {
+		// Show temporary status message for 3 seconds
+		statusCenter = fmt.Sprintf(" %s ", app.statusMessage)
+	} else if app.terminal.IsScrolling() {
 		current, total := app.terminal.GetScrollPosition()
 		statusCenter = fmt.Sprintf(" SCROLL: %d/%d [Ctrl+S] [q:Exit] ", current, total)
 	} else if app.isPaused {
 		statusCenter = " PAUSED [F8] "
 	} else {
 		// Show hint for scroll mode
-		statusCenter = " [Ctrl+S: Scroll] [F1: Help] "
+		statusCenter = " [Ctrl+S: Scroll] [F1: Menu] "
 	}
-	
+
 	// Right: Session info
 	if app.session != nil {
-		statusRight = fmt.Sprintf(" TX:%d RX:%d ", 
-			app.session.BytesSent, 
+		statusRight = fmt.Sprintf(" TX:%d RX:%d ",
+			app.session.BytesSent,
 			app.session.BytesRecv)
 	}
-	
+
 	// Draw status bar with different style
 	statusStyle := tcell.StyleDefault.
 		Background(tcell.ColorDarkBlue).
 		Foreground(tcell.ColorWhite)
-	
+
 	// Fill entire bottom line
 	for x := 0; x < screenWidth; x++ {
 		app.screen.SetContent(x, statusY, ' ', nil, statusStyle)
 	}
-	
+
 	// Draw left text
 	for i, ch := range statusLeft {
 		if i < screenWidth {
 			app.screen.SetContent(i, statusY, ch, nil, statusStyle.Bold(true))
 		}
 	}
-	
+
 	// Draw center text
 	centerX := (screenWidth - len(statusCenter)) / 2
 	if centerX < 0 {
@@ -1045,16 +1075,20 @@ func (app *Application) updateDisplay() {
 	}
 	for i, ch := range statusCenter {
 		if centerX+i < screenWidth {
-			if app.terminal.IsScrolling() {
+			if app.statusMessage != "" && time.Since(app.statusTime) < 3*time.Second {
+				// Highlight status message with green background
+				app.screen.SetContent(centerX+i, statusY, ch, nil,
+					statusStyle.Background(tcell.ColorDarkGreen).Bold(true))
+			} else if app.terminal.IsScrolling() {
 				// Highlight scroll mode
-				app.screen.SetContent(centerX+i, statusY, ch, nil, 
+				app.screen.SetContent(centerX+i, statusY, ch, nil,
 					statusStyle.Background(tcell.ColorDarkRed).Bold(true))
 			} else {
 				app.screen.SetContent(centerX+i, statusY, ch, nil, statusStyle)
 			}
 		}
 	}
-	
+
 	// Draw right text
 	rightX := screenWidth - len(statusRight)
 	if rightX < 0 {
@@ -1065,7 +1099,7 @@ func (app *Application) updateDisplay() {
 			app.screen.SetContent(rightX+i, statusY, ch, nil, statusStyle)
 		}
 	}
-	
+
 	// Show cursor (adjusted for status bar)
 	if !app.terminal.IsScrolling() {
 		if state.CursorX >= 0 && state.CursorX < screen.Width &&
@@ -1076,6 +1110,11 @@ func (app *Application) updateDisplay() {
 
 	// Show the screen
 	app.screen.Show()
+
+	// If menu is visible, redraw it on top
+	if app.mainMenu != nil && app.mainMenu.IsVisible() {
+		app.mainMenu.Draw()
+	}
 
 	// Mark screen as clean
 	screen.Dirty = false
@@ -1300,6 +1339,7 @@ func (app *Application) setupMenu() {
 	app.mainMenu.AddItem("Clear Screen", "Ctrl+L", func() error {
 		app.logDebug("Menu: Clear Screen")
 		app.terminal.Clear()
+		app.updateStatusMessage("Screen cleared")
 		app.updateDisplay()
 		return nil
 	})
@@ -1307,6 +1347,7 @@ func (app *Application) setupMenu() {
 	app.mainMenu.AddItem("Clear History", "Ctrl+K", func() error {
 		app.logDebug("Menu: Clear History")
 		app.terminal.ClearScrollback()
+		app.updateStatusMessage("History cleared")
 		app.updateDisplay()
 		return nil
 	})
@@ -1316,7 +1357,11 @@ func (app *Application) setupMenu() {
 	// File Operations
 	app.mainMenu.AddItem("Save Session", "Ctrl+S", func() error {
 		app.logDebug("Menu: Save Session")
-		return app.saveSessionToFile()
+		err := app.saveSessionToFile()
+		if err != nil {
+			app.updateStatusMessage(fmt.Sprintf("Failed: %v", err))
+		}
+		return err
 	})
 
 	app.mainMenu.AddSeparator()
@@ -1324,21 +1369,78 @@ func (app *Application) setupMenu() {
 	// Connection
 	app.mainMenu.AddItem("Reconnect", "Ctrl+R", func() error {
 		app.logDebug("Menu: Reconnect")
-		return app.reconnect()
+		err := app.reconnect()
+		if err != nil {
+			app.updateStatusMessage(fmt.Sprintf("Reconnect failed: %v", err))
+		}
+		return err
 	})
 
 	app.mainMenu.AddSeparator()
 
 	// View Control
-	app.mainMenu.AddItem("Toggle Line Wrap", "Ctrl+W", func() error {
+	lineWrapLabel := "Line Wrap: ON"
+	if !app.lineWrap {
+		lineWrapLabel = "Line Wrap: OFF"
+	}
+	app.mainMenu.AddItem(lineWrapLabel, "Ctrl+W", func() error {
 		app.logDebug("Menu: Toggle Line Wrap")
-		// TODO: Implement line wrap toggle
+		app.lineWrap = !app.lineWrap
+
+		// Update menu label
+		newLabel := "Line Wrap: ON"
+		if !app.lineWrap {
+			newLabel = "Line Wrap: OFF"
+		}
+		idx := app.mainMenu.FindItemIndex("Line Wrap:")
+		if idx >= 0 {
+			app.mainMenu.UpdateItemLabel(idx, newLabel)
+		}
+
+		// Update status message
+		if app.lineWrap {
+			app.updateStatusMessage("Line wrap: ON")
+		} else {
+			app.updateStatusMessage("Line wrap: OFF")
+		}
+
+		// Update terminal line wrap setting
+		if app.terminal != nil {
+			app.terminal.SetLineWrap(app.lineWrap)
+		}
+
+		// Redraw menu
+		app.mainMenu.Draw()
 		return nil
 	})
 
-	app.mainMenu.AddItem("Toggle Local Echo", "Ctrl+E", func() error {
+	localEchoLabel := "Local Echo: OFF"
+	if app.localEcho {
+		localEchoLabel = "Local Echo: ON"
+	}
+	app.mainMenu.AddItem(localEchoLabel, "Ctrl+E", func() error {
 		app.logDebug("Menu: Toggle Local Echo")
-		// TODO: Implement local echo toggle
+		app.localEcho = !app.localEcho
+
+		// Update menu label
+		newLabel := "Local Echo: ON"
+		if !app.localEcho {
+			newLabel = "Local Echo: OFF"
+		}
+		idx := app.mainMenu.FindItemIndex("Local Echo:")
+		if idx >= 0 {
+			app.mainMenu.UpdateItemLabel(idx, newLabel)
+		}
+
+		// Update status message
+		if app.localEcho {
+			app.updateStatusMessage("Local echo: ON")
+		} else {
+			app.updateStatusMessage("Local echo: OFF")
+		}
+
+		// Redraw menu
+		app.mainMenu.Draw()
 		return nil
 	})
 
@@ -1347,21 +1449,26 @@ func (app *Application) setupMenu() {
 	// Help
 	app.mainMenu.AddItem("About", "F3", func() error {
 		app.logDebug("Menu: About")
-		app.showAbout()
+		// Show about info in status message
+		aboutMsg := fmt.Sprintf("Serial Terminal v%s - Modern terminal emulator", app.config.Version)
+		app.updateStatusMessage(aboutMsg)
 		return nil
 	})
 
 	app.mainMenu.AddItem("Exit", "Ctrl+Q", func() error {
 		app.logDebug("Menu: Exit")
+		app.mainMenu.Hide() // Close menu before exiting
 		go func() {
 			app.Stop()
 		}()
 		return nil
 	})
 
-	// Set close callback to restore screen
+	// Set close callback to restore screen and update display
 	app.mainMenu.SetOnClose(func() {
 		app.overlayMgr.RestoreScreen()
+		// Force redraw after menu closes
+		app.updateDisplay()
 	})
 }
 
@@ -1378,11 +1485,25 @@ func (app *Application) showMainMenu() {
 	app.mainMenu.Show()
 }
 
+// hideMainMenu hides the main menu
+func (app *Application) hideMainMenu() {
+	if app.mainMenu == nil || app.overlayMgr == nil {
+		return
+	}
+
+	if app.mainMenu.IsVisible() {
+		app.mainMenu.Hide()
+		app.overlayMgr.RestoreScreen()
+		// Force redraw after hiding menu
+		app.updateDisplay()
+	}
+}
+
 // saveSessionToFile saves the current session to a file
 func (app *Application) saveSessionToFile() error {
 	// Generate filename with timestamp
 	filename := fmt.Sprintf("session_%s.txt", time.Now().Format("20060102_150405"))
-	
+
 	// Create file
 	file, err := os.Create(filename)
 	if err != nil {
@@ -1414,17 +1535,17 @@ func (app *Application) saveSessionToFile() error {
 	}
 
 	app.logDebug("Session saved to %s", filename)
-	
+
 	// Show status message
 	app.updateStatusMessage(fmt.Sprintf("Session saved to %s", filename))
-	
+
 	return nil
 }
 
 // reconnect disconnects and reconnects to the serial port
 func (app *Application) reconnect() error {
 	app.logDebug("Reconnecting...")
-	
+
 	// Close current connection
 	if app.serialPort != nil && app.serialPort.IsOpen() {
 		app.serialPort.Close()
@@ -1441,77 +1562,26 @@ func (app *Application) reconnect() error {
 
 	// Clear terminal
 	app.terminal.Clear()
-	
+
 	// Update status
 	app.updateStatusMessage("Reconnected successfully")
-	
-	return nil
-}
 
-// showAbout displays about information
-func (app *Application) showAbout() {
-	aboutText := fmt.Sprintf("Serial Terminal v%s\n\nA modern serial port terminal emulator\n\nPress any key to continue...", app.config.Version)
-	
-	// Clear screen and show about
-	width, height := app.screen.Size()
-	style := tcell.StyleDefault.Background(tcell.ColorDarkBlue).Foreground(tcell.ColorWhite)
-	
-	// Draw box
-	boxWidth := 50
-	boxHeight := 8
-	startX := (width - boxWidth) / 2
-	startY := (height - boxHeight) / 2
-	
-	// Draw background
-	for y := startY; y < startY+boxHeight; y++ {
-		for x := startX; x < startX+boxWidth; x++ {
-			app.screen.SetContent(x, y, ' ', nil, style)
-		}
-	}
-	
-	// Draw border
-	// Top
-	app.screen.SetContent(startX, startY, '┌', nil, style)
-	app.screen.SetContent(startX+boxWidth-1, startY, '┐', nil, style)
-	for x := startX + 1; x < startX+boxWidth-1; x++ {
-		app.screen.SetContent(x, startY, '─', nil, style)
-	}
-	
-	// Sides
-	for y := startY + 1; y < startY+boxHeight-1; y++ {
-		app.screen.SetContent(startX, y, '│', nil, style)
-		app.screen.SetContent(startX+boxWidth-1, y, '│', nil, style)
-	}
-	
-	// Bottom
-	app.screen.SetContent(startX, startY+boxHeight-1, '└', nil, style)
-	app.screen.SetContent(startX+boxWidth-1, startY+boxHeight-1, '┘', nil, style)
-	for x := startX + 1; x < startX+boxWidth-1; x++ {
-		app.screen.SetContent(x, startY+boxHeight-1, '─', nil, style)
-	}
-	
-	// Draw text
-	lines := strings.Split(aboutText, "\n")
-	for i, line := range lines {
-		textX := startX + (boxWidth-len(line))/2
-		textY := startY + 2 + i
-		for j, ch := range line {
-			app.screen.SetContent(textX+j, textY, ch, nil, style)
-		}
-	}
-	
-	app.screen.Show()
-	
-	// Wait for key press
-	app.screen.PollEvent()
-	
-	// Restore screen
-	app.updateDisplay()
+	return nil
 }
 
 // updateStatusMessage shows a temporary status message
 func (app *Application) updateStatusMessage(message string) {
-	// This will be shown in the status bar temporarily
-	// For now, just log it
+	app.statusMessage = message
+	app.statusTime = time.Now()
+	// Force redraw to show the message
+	// Mark terminal as dirty to trigger redraw
+	if app.terminal != nil && app.terminal.GetScreen() != nil {
+		app.terminal.GetScreen().Dirty = true
+	}
+	app.updateDisplay()
+	// If menu is visible, also redraw it on top
+	if app.mainMenu != nil && app.mainMenu.IsVisible() {
+		app.mainMenu.Draw()
+	}
 	app.logDebug("Status: %s", message)
 }

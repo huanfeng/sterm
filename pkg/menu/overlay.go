@@ -32,7 +32,7 @@ func NewOverlayManager(screen tcell.Screen) *OverlayManager {
 func (om *OverlayManager) SaveScreen() {
 	om.width, om.height = om.screen.Size()
 	om.savedContent = make([][]SavedCell, om.height)
-	
+
 	for y := 0; y < om.height; y++ {
 		om.savedContent[y] = make([]SavedCell, om.width)
 		for x := 0; x < om.width; x++ {
@@ -50,14 +50,14 @@ func (om *OverlayManager) RestoreScreen() {
 	if om.savedContent == nil {
 		return
 	}
-	
+
 	for y := 0; y < len(om.savedContent); y++ {
 		for x := 0; x < len(om.savedContent[y]); x++ {
 			cell := om.savedContent[y][x]
 			om.screen.SetContent(x, y, cell.Char, nil, cell.Style)
 		}
 	}
-	
+
 	om.screen.Show()
 }
 

@@ -34,6 +34,7 @@ type TerminalState struct {
 	ScrollTop    int            `json:"scroll_top"`
 	ScrollBottom int            `json:"scroll_bottom"`
 	IsRunning    bool           `json:"is_running"`
+	LineWrap     bool           `json:"line_wrap"`
 }
 
 // Validate checks if the terminal state is valid
@@ -81,6 +82,7 @@ func DefaultTerminalState(width, height int) TerminalState {
 		ScrollTop:    0,
 		ScrollBottom: height - 1,
 		IsRunning:    false,
+		LineWrap:     true, // Default to line wrap enabled
 	}
 }
 
@@ -198,7 +200,7 @@ type TerminalEmulator struct {
 	scrollbackSize   int      // Maximum scrollback lines
 	scrollOffset     int      // Current scroll position (0 = bottom/normal)
 	isScrolling      bool     // Whether in scroll mode
-	
+
 	// Mouse mode change callback
 	onMouseModeChange func(mode MouseMode)
 }
@@ -1511,12 +1513,25 @@ func (te *TerminalEmulator) printChar(ch rune) {
 
 	// Check if there's enough space for wide characters
 	if charWidth == 2 && te.state.CursorX >= te.state.Width-1 {
-		// Not enough space for wide character, move to next line
-		te.newline()
-		te.carriageReturn()
+		// Not enough space for wide character
+		if te.state.LineWrap {
+			// Line wrap enabled: move to next line
+			te.newline()
+			te.carriageReturn()
+		} else {
+			// Line wrap disabled: stay at last column
+			te.state.CursorX = te.state.Width - 1
+			return
+		}
 	} else if te.state.CursorX >= te.state.Width {
-		te.newline()
-		te.carriageReturn()
+		if te.state.LineWrap {
+			// Line wrap enabled: move to next line
+			te.newline()
+			te.carriageReturn()
+		} else {
+			// Line wrap disabled: don't write beyond edge
+			return
+		}
 	}
 
 	if te.state.CursorY >= te.state.Height {
@@ -1837,16 +1852,21 @@ func (te *TerminalEmulator) ClearScrollback() {
 // GetAllLines returns all lines including scrollback buffer
 func (te *TerminalEmulator) GetAllLines() [][]Cell {
 	var allLines [][]Cell
-	
+
 	// Add scrollback buffer lines
 	allLines = append(allLines, te.scrollbackBuffer...)
-	
+
 	// Add current screen lines
 	if te.screen != nil {
 		allLines = append(allLines, te.screen.Buffer...)
 	}
-	
+
 	return allLines
+}
+
+// SetLineWrap enables or disables line wrapping
+func (te *TerminalEmulator) SetLineWrap(enabled bool) {
+	te.state.LineWrap = enabled
 }
 
 // setMode sets terminal mode

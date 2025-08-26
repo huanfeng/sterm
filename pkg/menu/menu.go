@@ -2,6 +2,8 @@ package menu
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -16,7 +18,7 @@ type Menu struct {
 	height   int
 	parent   *Menu
 	title    string
-	
+
 	// Callbacks
 	onClose func()
 }
@@ -208,22 +210,22 @@ func (m *Menu) HandleKey(ev *tcell.EventKey) bool {
 		return true
 	}
 
-	// Check for shortcut keys
-	if ev.Key() == tcell.KeyRune {
-		char := ev.Rune()
-		for _, item := range m.items {
-			if item.Shortcut != "" && !item.Separator && item.Enabled {
-				// Simple shortcut matching (could be improved)
-				if string(char) == item.Shortcut {
-					if item.Action != nil {
-						item.Action()
-						m.Hide()
-					}
-					return true
-				}
-			}
-		}
-	}
+	// Check for shortcut keys (disabled for now to avoid conflicts)
+	// Shortcut keys should only work from main app, not when menu is open
+	// if ev.Key() == tcell.KeyRune {
+	// 	char := ev.Rune()
+	// 	for _, item := range m.items {
+	// 		if item.Shortcut != "" && !item.Separator && item.Enabled {
+	// 			// Simple shortcut matching (could be improved)
+	// 			if string(char) == item.Shortcut {
+	// 				if item.Action != nil {
+	// 					item.Action()
+	// 				}
+	// 				return true
+	// 			}
+	// 		}
+	// 	}
+	// }
 
 	return false
 }
@@ -276,7 +278,6 @@ func (m *Menu) activateSelected() bool {
 			// Could show error in status bar
 			fmt.Printf("Menu action error: %v\n", err)
 		}
-		m.Hide()
 		return true
 	}
 
@@ -322,7 +323,7 @@ func (m *Menu) drawText(x, y int, text string, style tcell.Style) {
 // updateDimensions updates menu dimensions based on items
 func (m *Menu) updateDimensions() {
 	maxWidth := len(m.title) + 4
-	
+
 	for _, item := range m.items {
 		if !item.Separator {
 			width := len(item.Label) + len(item.Shortcut) + 8
@@ -334,7 +335,7 @@ func (m *Menu) updateDimensions() {
 			}
 		}
 	}
-	
+
 	m.width = maxWidth
 	m.height = len(m.items) + 4 // Items + borders + title
 	if m.title != "" {
@@ -359,4 +360,22 @@ func (m *Menu) Clear() {
 	m.items = []MenuItem{}
 	m.selected = 0
 	m.updateDimensions()
+}
+
+// UpdateItemLabel updates the label of a menu item by index
+func (m *Menu) UpdateItemLabel(index int, newLabel string) {
+	if index >= 0 && index < len(m.items) {
+		m.items[index].Label = newLabel
+		m.updateDimensions()
+	}
+}
+
+// FindItemIndex finds the index of an item by its label
+func (m *Menu) FindItemIndex(label string) int {
+	for i, item := range m.items {
+		if strings.Contains(item.Label, label) {
+			return i
+		}
+	}
+	return -1
 }
