@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
 // Terminal interface defines the contract for terminal operations
@@ -1121,14 +1122,9 @@ func (tr *TerminalRenderer) Render() error {
 
 			style := tr.attributesToStyle(cell.Attributes)
 
-			// Check if this is a wide character
-			if runeWidth(cell.Char) == 2 {
-				// For wide characters, tcell handles the rendering across two cells
-				tr.screen.SetContent(x, y, cell.Char, nil, style)
-			} else {
-				// Normal character
-				tr.screen.SetContent(x, y, cell.Char, nil, style)
-			}
+			// tcell's SetContent automatically handles wide characters
+			// It will occupy two cells for wide characters and handle cursor positioning
+			tr.screen.SetContent(x, y, cell.Char, nil, style)
 		}
 	}
 
@@ -1448,54 +1444,9 @@ func (te *TerminalEmulator) executeAction(action Action) {
 	}
 }
 
-// runeWidth returns the display width of a rune (1 for normal, 2 for wide characters)
+// runeWidth returns the display width of a rune using the standard runewidth library
 func runeWidth(r rune) int {
-	// Check for zero-width characters
-	if r == 0 || r == '\t' {
-		return 0
-	}
-
-	// Check for control characters
-	if r < 0x20 || (r >= 0x7F && r < 0xA0) {
-		return 0
-	}
-
-	// Check for CJK characters (simplified check)
-	// CJK Unified Ideographs
-	if (r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
-		(r >= 0x3400 && r <= 0x4DBF) || // CJK Extension A
-		(r >= 0x20000 && r <= 0x2A6DF) || // CJK Extension B
-		(r >= 0x2A700 && r <= 0x2B73F) || // CJK Extension C
-		(r >= 0x2B740 && r <= 0x2B81F) || // CJK Extension D
-		(r >= 0x2B820 && r <= 0x2CEAF) || // CJK Extension E
-		(r >= 0xF900 && r <= 0xFAFF) || // CJK Compatibility Ideographs
-		(r >= 0x2F800 && r <= 0x2FA1F) { // CJK Compatibility Supplement
-		return 2
-	}
-
-	// Hiragana and Katakana
-	if (r >= 0x3040 && r <= 0x309F) || // Hiragana
-		(r >= 0x30A0 && r <= 0x30FF) { // Katakana
-		return 2
-	}
-
-	// Hangul
-	if (r >= 0xAC00 && r <= 0xD7AF) || // Hangul Syllables
-		(r >= 0x1100 && r <= 0x11FF) || // Hangul Jamo
-		(r >= 0x3130 && r <= 0x318F) || // Hangul Compatibility Jamo
-		(r >= 0xA960 && r <= 0xA97F) || // Hangul Jamo Extended-A
-		(r >= 0xD7B0 && r <= 0xD7FF) { // Hangul Jamo Extended-B
-		return 2
-	}
-
-	// Fullwidth ASCII and symbols
-	if (r >= 0xFF00 && r <= 0xFF60) || // Fullwidth ASCII
-		(r >= 0xFFE0 && r <= 0xFFE6) { // Fullwidth symbols
-		return 2
-	}
-
-	// Default to narrow width
-	return 1
+	return runewidth.RuneWidth(r)
 }
 
 // printChar prints a character at the current cursor position

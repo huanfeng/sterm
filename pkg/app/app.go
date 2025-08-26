@@ -16,6 +16,7 @@ import (
 	"serial-terminal/pkg/terminal"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/mattn/go-runewidth"
 )
 
 // Application represents the main application controller
@@ -1135,41 +1136,50 @@ func (app *Application) updateDisplay() {
 	}
 
 	// Draw left text
-	for i, ch := range statusLeft {
-		if i < screenWidth {
-			app.screen.SetContent(i, statusY, ch, nil, statusStyle.Bold(true))
+	x := 0
+	for _, ch := range statusLeft {
+		if x < screenWidth {
+			app.screen.SetContent(x, statusY, ch, nil, statusStyle.Bold(true))
+			x += runewidth.RuneWidth(ch)
 		}
 	}
 
 	// Draw center text
-	centerX := (screenWidth - len(statusCenter)) / 2
+	// Use runewidth to calculate actual display width
+	centerWidth := runewidth.StringWidth(statusCenter)
+	centerX := (screenWidth - centerWidth) / 2
 	if centerX < 0 {
 		centerX = 0
 	}
-	for i, ch := range statusCenter {
-		if centerX+i < screenWidth {
+	x = centerX
+	for _, ch := range statusCenter {
+		if x < screenWidth {
 			if app.statusMessage != "" && time.Since(app.statusTime) < 3*time.Second {
 				// Highlight status message with green background
-				app.screen.SetContent(centerX+i, statusY, ch, nil,
+				app.screen.SetContent(x, statusY, ch, nil,
 					statusStyle.Background(tcell.ColorDarkGreen).Bold(true))
 			} else if app.terminal.IsScrolling() {
 				// Highlight scroll mode
-				app.screen.SetContent(centerX+i, statusY, ch, nil,
+				app.screen.SetContent(x, statusY, ch, nil,
 					statusStyle.Background(tcell.ColorDarkRed).Bold(true))
 			} else {
-				app.screen.SetContent(centerX+i, statusY, ch, nil, statusStyle)
+				app.screen.SetContent(x, statusY, ch, nil, statusStyle)
 			}
+			x += runewidth.RuneWidth(ch)
 		}
 	}
 
 	// Draw right text
-	rightX := screenWidth - len(statusRight)
+	rightWidth := runewidth.StringWidth(statusRight)
+	rightX := screenWidth - rightWidth
 	if rightX < 0 {
 		rightX = 0
 	}
-	for i, ch := range statusRight {
-		if rightX+i < screenWidth {
-			app.screen.SetContent(rightX+i, statusY, ch, nil, statusStyle)
+	x = rightX
+	for _, ch := range statusRight {
+		if x < screenWidth {
+			app.screen.SetContent(x, statusY, ch, nil, statusStyle)
+			x += runewidth.RuneWidth(ch)
 		}
 	}
 
