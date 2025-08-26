@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +56,8 @@ type Application struct {
 	config AppConfig
 
 	// Debug
-	debugLog *os.File
+	debugLog  *os.File
+	debugMode bool
 }
 
 // AppConfig contains application configuration
@@ -72,6 +74,7 @@ type AppConfig struct {
 	SendWindowSizeOnResize  bool   // Send window size when resizing
 	TerminalType            string // Terminal type to report (vt100, xterm, etc.)
 	Version                 string // Application version
+	DebugMode               bool   // Enable debug logging
 }
 
 // DefaultAppConfig returns default application configuration
@@ -158,6 +161,36 @@ func (app *Application) Debugf(format string, args ...interface{}) {
 	app.logDebug(format, args...)
 }
 
+// createDebugLog creates debug log file in user's .serial-terminal directory
+func createDebugLog() *os.File {
+	// Get user's home directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to current directory
+		debugLog, _ := os.Create("serial-terminal-debug.log")
+		return debugLog
+	}
+
+	// Create .serial-terminal directory if it doesn't exist
+	serialTerminalDir := filepath.Join(homeDir, ".serial-terminal")
+	if err := os.MkdirAll(serialTerminalDir, 0755); err != nil {
+		// Fallback to current directory
+		debugLog, _ := os.Create("serial-terminal-debug.log")
+		return debugLog
+	}
+
+	// Create debug log file in the directory
+	debugLogPath := filepath.Join(serialTerminalDir, "serial-terminal-debug.log")
+	debugLog, err := os.Create(debugLogPath)
+	if err != nil {
+		// Fallback to current directory
+		debugLog, _ = os.Create("serial-terminal-debug.log")
+		return debugLog
+	}
+
+	return debugLog
+}
+
 // NewApplication creates a new application instance
 func NewApplication(config AppConfig) (*Application, error) {
 	// Validate configuration
@@ -168,8 +201,11 @@ func NewApplication(config AppConfig) (*Application, error) {
 	// Create context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create debug log file (optional, won't fail if can't create)
-	debugLog, _ := os.Create("serial-terminal-debug.log")
+	// Create debug log file only if debug mode is enabled
+	var debugLog *os.File
+	if config.DebugMode {
+		debugLog = createDebugLog()
+	}
 
 	// Create components
 	app := &Application{
@@ -181,6 +217,7 @@ func NewApplication(config AppConfig) (*Application, error) {
 		localEcho: false, // Local echo off by default
 		lineWrap:  true,  // Line wrap on by default
 		debugLog:  debugLog,
+		debugMode: config.DebugMode,
 	}
 
 	// Initialize components
@@ -467,8 +504,8 @@ func (app *Application) Stop() error {
 		app.session.End()
 	}
 
-	// Save history if configured
-	if app.config.SaveHistory && app.historyMgr != nil && app.session != nil {
+	// Save history if configured and debug mode is enabled
+	if app.config.SaveHistory && app.debugMode && app.historyMgr != nil && app.session != nil {
 		filename := fmt.Sprintf("session_%s.log", app.session.ID)
 		app.historyMgr.SaveToFile(filename, app.config.HistoryFormat)
 	}

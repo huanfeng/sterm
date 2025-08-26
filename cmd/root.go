@@ -10,6 +10,7 @@ import (
 var (
 	// Root command flags
 	verbose bool
+	debug   bool
 
 	// Root command
 	rootCmd = &cobra.Command{
@@ -37,6 +38,7 @@ func init() {
 
 	// Persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "enable debug logging")
 
 	// Add subcommands
 	rootCmd.AddCommand(listCmd)

@@ -146,9 +146,11 @@ func runConnect(cmd *cobra.Command, args []string) {
 	fmt.Println("Press Ctrl+Shift+Q to exit (customizable in settings)")
 
 	// Pass terminal behavior options
+	debugFlag, _ := cmd.InheritedFlags().GetBool("debug")
 	appOpts := app.AppOptions{
 		SendWindowSize: sendWindowSize,
 		TerminalType:   terminalType,
+		DebugMode:      debugFlag,
 	}
 
 	if err := app.RunInteractiveWithOptions(serialConfig, appOpts); err != nil {

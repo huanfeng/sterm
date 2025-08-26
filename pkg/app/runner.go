@@ -123,6 +123,7 @@ func (r *Runner) Stop() error {
 type AppOptions struct {
 	SendWindowSize bool
 	TerminalType   string
+	DebugMode      bool
 }
 
 // RunInteractive runs the application in interactive mode with a UI
@@ -144,6 +145,7 @@ func RunInteractiveWithOptions(serialConfig serial.SerialConfig, opts AppOptions
 	// Apply options
 	appConfig.SendWindowSizeOnConnect = opts.SendWindowSize
 	appConfig.SendWindowSizeOnResize = opts.SendWindowSize
+	appConfig.DebugMode = opts.DebugMode
 	if opts.TerminalType != "" {
 		appConfig.TerminalType = opts.TerminalType
 	}
