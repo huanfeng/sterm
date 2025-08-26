@@ -677,26 +677,83 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		return
 	}
 
-	// Handle scrolling keys with Ctrl modifier to avoid conflicts with applications
-	switch ev.Key() {
-	case tcell.KeyCtrlS:
-		// Ctrl+S - Enter scroll mode (easy shortcut)
-		if !app.terminal.IsScrolling() {
-			app.terminal.EnterScrollMode()
-			app.updateDisplay()
+	// Check for menu shortcuts when menu is NOT visible
+	// Using Alt+ combinations to avoid conflicts with bash and other terminal applications
+	if !app.mainMenu.IsVisible() {
+		// Check for Alt+ combinations
+		if ev.Modifiers()&tcell.ModAlt != 0 {
+			switch ev.Rune() {
+			case 'c', 'C':
+				// Alt+C - Clear Screen
+				app.logDebug("Alt+C Clear Screen shortcut")
+				if err := app.ClearScreen(); err != nil {
+					app.updateStatusMessage(fmt.Sprintf("Clear screen failed: %v", err))
+				} else {
+					app.updateStatusMessage("Screen cleared")
+				}
+				return
+			case 'h', 'H':
+				// Alt+H - Clear History
+				app.logDebug("Alt+H Clear History shortcut")
+				app.terminal.ClearScrollback()
+				app.updateStatusMessage("History cleared")
+				return
+			case 'r', 'R':
+				// Alt+R - Reconnect
+				app.logDebug("Alt+R Reconnect shortcut")
+				if err := app.Reconnect(); err != nil {
+					app.updateStatusMessage(fmt.Sprintf("Reconnect failed: %v", err))
+				} else {
+					app.updateStatusMessage("Reconnected successfully")
+				}
+				return
+			case 's', 'S':
+				// Alt+S - Save Session
+				app.logDebug("Alt+S Save Session shortcut")
+				if err := app.saveSessionToFile(); err != nil {
+					app.updateStatusMessage(fmt.Sprintf("Save failed: %v", err))
+				} else {
+					filename := fmt.Sprintf("session_%s.txt", time.Now().Format("20060102_150405"))
+					app.updateStatusMessage(fmt.Sprintf("Session saved to %s", filename))
+				}
+				return
+			}
 		}
-		return
+	}
+
+	// Handle scrolling keys - Shift+PageUp/Up enters scroll mode
+	switch ev.Key() {
 	case tcell.KeyPgUp:
+		if ev.Modifiers()&tcell.ModShift != 0 {
+			// Shift+PageUp - scroll up one page and enter scroll mode
+			if !app.terminal.IsScrolling() {
+				app.terminal.EnterScrollMode()
+			}
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollUp(height)
+			app.updateDisplay()
+			return
+		}
 		if ev.Modifiers()&tcell.ModCtrl != 0 {
-			// Ctrl+PageUp - scroll up one page
+			// Ctrl+PageUp - scroll up one page (alternative)
 			height := app.terminal.GetState().Height
 			app.terminal.ScrollUp(height)
 			app.updateDisplay()
 			return
 		}
 	case tcell.KeyPgDn:
+		if ev.Modifiers()&tcell.ModShift != 0 {
+			// Shift+PageDown - scroll down one page in scroll mode
+			if !app.terminal.IsScrolling() {
+				app.terminal.EnterScrollMode()
+			}
+			height := app.terminal.GetState().Height
+			app.terminal.ScrollDown(height)
+			app.updateDisplay()
+			return
+		}
 		if ev.Modifiers()&tcell.ModCtrl != 0 {
-			// Ctrl+PageDown - scroll down one page
+			// Ctrl+PageDown - scroll down one page (alternative)
 			height := app.terminal.GetState().Height
 			app.terminal.ScrollDown(height)
 			app.updateDisplay()
@@ -704,14 +761,20 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		}
 	case tcell.KeyUp:
 		if ev.Modifiers()&tcell.ModShift != 0 {
-			// Shift+Up - scroll up one line
+			// Shift+Up - scroll up one line and enter scroll mode
+			if !app.terminal.IsScrolling() {
+				app.terminal.EnterScrollMode()
+			}
 			app.terminal.ScrollUp(1)
 			app.updateDisplay()
 			return
 		}
 	case tcell.KeyDown:
 		if ev.Modifiers()&tcell.ModShift != 0 {
-			// Shift+Down - scroll down one line
+			// Shift+Down - scroll down one line in scroll mode
+			if !app.terminal.IsScrolling() {
+				app.terminal.EnterScrollMode()
+			}
 			app.terminal.ScrollDown(1)
 			app.updateDisplay()
 			return
@@ -725,7 +788,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		}
 	case tcell.KeyEnd:
 		if ev.Modifiers()&tcell.ModCtrl != 0 {
-			// Ctrl+End - scroll to bottom (exit scroll mode)
+			// Ctrl+End - scroll to bottom (stay in scroll mode)
 			app.terminal.ScrollToBottom()
 			app.updateDisplay()
 			return
@@ -736,9 +799,19 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 	if app.terminal.IsScrolling() {
 		handled := false
 		switch ev.Key() {
-		case tcell.KeyEscape, tcell.KeyRune:
-			// ESC or 'q' exits scroll mode
-			if ev.Key() == tcell.KeyEscape || ev.Rune() == 'q' || ev.Rune() == 'Q' {
+		case tcell.KeyEscape:
+			// ESC exits scroll mode
+			app.terminal.ExitScrollMode()
+			app.updateDisplay()
+			return
+		case tcell.KeyEnter:
+			// Enter exits scroll mode
+			app.terminal.ExitScrollMode()
+			app.updateDisplay()
+			return
+		case tcell.KeyRune:
+			// 'q' also exits scroll mode for convenience
+			if ev.Rune() == 'q' || ev.Rune() == 'Q' {
 				app.terminal.ExitScrollMode()
 				app.updateDisplay()
 				return
@@ -755,7 +828,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 				handled = true
 			case 'l', 'L': // Right (not used in vertical scroll)
 				handled = true
-			case 'g', 'G': // Top/Bottom
+			case 'g', 'G': // Top/Bottom (stay in scroll mode)
 				if ev.Modifiers()&tcell.ModShift != 0 { // G - go to bottom
 					app.terminal.ScrollToBottom()
 				} else { // g - go to top
@@ -1036,12 +1109,12 @@ func (app *Application) updateDisplay() {
 		statusCenter = fmt.Sprintf(" %s ", app.statusMessage)
 	} else if app.terminal.IsScrolling() {
 		current, total := app.terminal.GetScrollPosition()
-		statusCenter = fmt.Sprintf(" SCROLL: %d/%d [Ctrl+S] [q:Exit] ", current, total)
+		statusCenter = fmt.Sprintf(" SCROLL: %d/%d [j/k:↑↓ d/u:½Page f/b:Page g/G:Top/Bot ESC/Enter/q:Exit] ", current, total)
 	} else if app.isPaused {
 		statusCenter = " PAUSED [F8] "
 	} else {
 		// Show hint for scroll mode
-		statusCenter = " [Ctrl+S: Scroll] [F1: Menu] "
+		statusCenter = " [Shift+PgUp/↑: Scroll] [F1: Menu] "
 	}
 
 	// Right: Session info
@@ -1336,7 +1409,7 @@ func generateSessionID() string {
 // setupMenu initializes the main menu
 func (app *Application) setupMenu() {
 	// Session Management
-	app.mainMenu.AddItem("Clear Screen", "Ctrl+L", func() error {
+	app.mainMenu.AddItem("Clear Screen", "Alt+C", func() error {
 		app.logDebug("Menu: Clear Screen")
 		app.terminal.Clear()
 		app.updateStatusMessage("Screen cleared")
@@ -1344,7 +1417,7 @@ func (app *Application) setupMenu() {
 		return nil
 	})
 
-	app.mainMenu.AddItem("Clear History", "Ctrl+K", func() error {
+	app.mainMenu.AddItem("Clear History", "Alt+H", func() error {
 		app.logDebug("Menu: Clear History")
 		app.terminal.ClearScrollback()
 		app.updateStatusMessage("History cleared")
@@ -1355,7 +1428,7 @@ func (app *Application) setupMenu() {
 	app.mainMenu.AddSeparator()
 
 	// File Operations
-	app.mainMenu.AddItem("Save Session", "Ctrl+S", func() error {
+	app.mainMenu.AddItem("Save Session", "Alt+S", func() error {
 		app.logDebug("Menu: Save Session")
 		err := app.saveSessionToFile()
 		if err != nil {
@@ -1367,7 +1440,7 @@ func (app *Application) setupMenu() {
 	app.mainMenu.AddSeparator()
 
 	// Connection
-	app.mainMenu.AddItem("Reconnect", "Ctrl+R", func() error {
+	app.mainMenu.AddItem("Reconnect", "Alt+R", func() error {
 		app.logDebug("Menu: Reconnect")
 		err := app.reconnect()
 		if err != nil {
@@ -1383,7 +1456,7 @@ func (app *Application) setupMenu() {
 	if !app.lineWrap {
 		lineWrapLabel = "Line Wrap: OFF"
 	}
-	app.mainMenu.AddItem(lineWrapLabel, "Ctrl+W", func() error {
+	app.mainMenu.AddItem(lineWrapLabel, "", func() error {
 		app.logDebug("Menu: Toggle Line Wrap")
 		app.lineWrap = !app.lineWrap
 
@@ -1418,7 +1491,7 @@ func (app *Application) setupMenu() {
 	if app.localEcho {
 		localEchoLabel = "Local Echo: ON"
 	}
-	app.mainMenu.AddItem(localEchoLabel, "Ctrl+E", func() error {
+	app.mainMenu.AddItem(localEchoLabel, "", func() error {
 		app.logDebug("Menu: Toggle Local Echo")
 		app.localEcho = !app.localEcho
 
@@ -1447,7 +1520,7 @@ func (app *Application) setupMenu() {
 	app.mainMenu.AddSeparator()
 
 	// Help
-	app.mainMenu.AddItem("About", "F3", func() error {
+	app.mainMenu.AddItem("About", "", func() error {
 		app.logDebug("Menu: About")
 		// Show about info in status message
 		aboutMsg := fmt.Sprintf("Serial Terminal v%s - Modern terminal emulator", app.config.Version)
@@ -1455,7 +1528,7 @@ func (app *Application) setupMenu() {
 		return nil
 	})
 
-	app.mainMenu.AddItem("Exit", "Ctrl+Q", func() error {
+	app.mainMenu.AddItem("Exit Application", "Ctrl+Q", func() error {
 		app.logDebug("Menu: Exit")
 		app.mainMenu.Hide() // Close menu before exiting
 		go func() {
