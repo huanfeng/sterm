@@ -1550,6 +1550,8 @@ func (te *TerminalEmulator) moveCursor(move CursorMove) {
 		te.state.CursorX = newX
 		te.state.CursorY = newY
 	}
+	// Mark screen as dirty to force cursor update
+	te.GetScreen().Dirty = true
 }
 
 // Clear clears the entire screen (public method)
@@ -1566,6 +1568,9 @@ func (te *TerminalEmulator) clearScreen(mode int) {
 		te.clearToCursor()
 	case 2: // Clear entire screen
 		te.clearEntireScreen()
+		// Reset cursor to home position when clearing entire screen
+		te.state.CursorX = 0
+		te.state.CursorY = 0
 	}
 	te.GetScreen().Dirty = true
 }

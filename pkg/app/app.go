@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -701,6 +702,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		} else {
 			app.Pause()
 		}
+		app.updateDisplay() // Force immediate display refresh
 		return
 	}
 
@@ -826,6 +828,11 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 	if app.terminal.IsScrolling() {
 		handled := false
 		switch ev.Key() {
+		case tcell.KeyF1:
+			// F1 should still work in scroll mode to show menu
+			// Let it fall through to normal processing
+			// Don't set handled=true, so it continues to shortcut processing
+			handled = false
 		case tcell.KeyEscape:
 			// ESC exits scroll mode
 			app.terminal.ExitScrollMode()
@@ -909,8 +916,12 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 			return
 		}
 
-		// Other keys don't exit scroll mode, just ignore them
-		return
+		// F1 key should pass through to shortcuts even in scroll mode
+		if ev.Key() != tcell.KeyF1 {
+			// Other keys don't exit scroll mode, just ignore them
+			return
+		}
+		// F1 continues to shortcut processing below
 	}
 
 	// Check shortcuts first
@@ -1138,10 +1149,10 @@ func (app *Application) updateDisplay() {
 		current, total := app.terminal.GetScrollPosition()
 		statusCenter = fmt.Sprintf(" SCROLL: %d/%d [j/k:↑↓ d/u:½Page f/b:Page g/G:Top/Bot ESC/Enter/q:Exit] ", current, total)
 	} else if app.isPaused {
-		statusCenter = " PAUSED [F8] "
+		statusCenter = " [Shift+PgUp/↑: Scroll] [F1: Menu] PAUSED [F8: Resume] "
 	} else {
-		// Show hint for scroll mode
-		statusCenter = " [Shift+PgUp/↑: Scroll] [F1: Menu] "
+		// Show hint for scroll mode and pause
+		statusCenter = " [Shift+PgUp/↑: Scroll] [F1: Menu] [F8: Pause] "
 	}
 
 	// Right: Session info
@@ -1178,6 +1189,8 @@ func (app *Application) updateDisplay() {
 		centerX = 0
 	}
 	x = centerX
+	pauseIndicator := "PAUSED [F8: Resume]"
+	runeIndex := 0
 	for _, ch := range statusCenter {
 		if x < screenWidth {
 			if app.statusMessage != "" && time.Since(app.statusTime) < 3*time.Second {
@@ -1187,11 +1200,26 @@ func (app *Application) updateDisplay() {
 			} else if app.terminal.IsScrolling() {
 				// Highlight scroll mode
 				app.screen.SetContent(x, statusY, ch, nil,
-					statusStyle.Background(tcell.ColorDarkRed).Bold(true))
+					statusStyle.Background(tcell.ColorDarkCyan).Bold(true))
+			} else if app.isPaused {
+				// Check if current character is part of the pause indicator
+				pauseStart := strings.Index(statusCenter, pauseIndicator)
+				// Convert string index to rune index
+				runesBeforePause := len([]rune(statusCenter[:pauseStart]))
+				pauseRuneCount := len([]rune(pauseIndicator))
+				if pauseStart >= 0 && runeIndex >= runesBeforePause && runeIndex < runesBeforePause+pauseRuneCount {
+					// Highlight only the pause indicator with red background
+					app.screen.SetContent(x, statusY, ch, nil,
+						statusStyle.Background(tcell.ColorDarkRed).Bold(true))
+				} else {
+					// Normal style for other parts
+					app.screen.SetContent(x, statusY, ch, nil, statusStyle)
+				}
 			} else {
 				app.screen.SetContent(x, statusY, ch, nil, statusStyle)
 			}
 			x += runewidth.RuneWidth(ch)
+			runeIndex++
 		}
 	}
 
@@ -1239,6 +1267,13 @@ func (app *Application) Pause() error {
 	}
 
 	app.isPaused = true
+	// Mark screen as dirty to force redraw
+	if app.terminal != nil {
+		screen := app.terminal.GetScreen()
+		if screen != nil {
+			screen.Dirty = true
+		}
+	}
 	return nil
 }
 
@@ -1252,6 +1287,13 @@ func (app *Application) Resume() error {
 	}
 
 	app.isPaused = false
+	// Mark screen as dirty to force redraw
+	if app.terminal != nil {
+		screen := app.terminal.GetScreen()
+		if screen != nil {
+			screen.Dirty = true
+		}
+	}
 	return nil
 }
 
