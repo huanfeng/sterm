@@ -1,0 +1,130 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: sterm
+    main: .
+    binary: sterm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - 386
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}-
+      {{- .Version }}-
+      {{- .Os }}-
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    formats: ['tar.gz']
+    format_overrides:
+      - goos: windows
+        formats: ['zip']
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
+
+checksum:
+  name_template: 'SHA256SUMS.txt'
+
+release:
+  name_template: "STerm {{.Version}}"
+  draft: false
+  mode: append
+  replace_existing_artifacts: true
+  header: |
+    ## STerm {{.Version}}
+
+    A modern terminal emulator with UART support.
+
+    ### Installation
+
+    #### Linux/macOS
+    ```bash
+    # Download the appropriate archive for your system
+    curl -L https://github.com/{{.Env.GITHUB_REPOSITORY}}/releases/download/{{.Tag}}/{{ .ProjectName }}-{{.Version}}-linux-x86_64.tar.gz -o sterm.tar.gz
+
+    # Extract
+    tar xzf sterm.tar.gz
+
+    # Move to PATH
+    sudo mv sterm /usr/local/bin/
+
+    # Make executable
+    sudo chmod +x /usr/local/bin/sterm
+    ```
+
+    #### Windows
+    Download the Windows archive and extract `sterm.exe` to a directory in your PATH.
+
+    #### Using Scoop (Windows)
+    ```powershell
+    # Add the bucket (first time only)
+    scoop bucket add huanfeng-bucket https://github.com/{{.Env.GITHUB_REPOSITORY_OWNER}}/scoop-bucket
+
+    # Install sterm
+    scoop install sterm
+    ```
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+  groups:
+    - title: '✨ Features'
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: '🐛 Bug Fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: '📚 Documentation'
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: '🚀 Performance'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: '♻️ Refactor'
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 4
+    - title: Others
+      order: 999
+
+scoops:
+  - name: sterm
+    directory: "bucket"
+    commit_msg_template: "Update STerm scoop manifest to {{ .Tag }}"
+    homepage: "https://github.com/{{.Env.GITHUB_REPOSITORY}}"
+    description: "STerm - A modern terminal emulator with UART support"
+    license: MIT
+    skip_upload: "{{ not .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    repository:
+      owner: "{{.Env.GITHUB_REPOSITORY_OWNER}}"
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: goreleaser@bot.com
