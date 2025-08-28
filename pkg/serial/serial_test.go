@@ -40,13 +40,25 @@ func TestSerialConfig_Validate(t *testing.T) {
 			name: "invalid baud rate",
 			config: SerialConfig{
 				Port:     "COM1",
-				BaudRate: 12345,
+				BaudRate: -1, // Negative baud rate should fail
 				DataBits: 8,
 				StopBits: 1,
 				Parity:   "none",
 				Timeout:  time.Second * 5,
 			},
 			wantErr: true,
+		},
+		{
+			name: "non-standard but valid baud rate",
+			config: SerialConfig{
+				Port:     "COM1",
+				BaudRate: 12345, // Non-standard but positive baud rate should pass
+				DataBits: 8,
+				StopBits: 1,
+				Parity:   "none",
+				Timeout:  time.Second * 5,
+			},
+			wantErr: false,
 		},
 		{
 			name: "invalid data bits",
@@ -315,7 +327,7 @@ func TestConvertParity(t *testing.T) {
 func TestPortInfo_Structure(t *testing.T) {
 	portInfo := PortInfo{
 		Name:         "COM1",
-		Description:  "USB Serial Port",
+		Product:      "USB Serial Port",
 		VID:          "1234",
 		PID:          "5678",
 		SerialNumber: "ABC123",
@@ -325,8 +337,8 @@ func TestPortInfo_Structure(t *testing.T) {
 		t.Errorf("PortInfo.Name = %s, want COM1", portInfo.Name)
 	}
 
-	if portInfo.Description != "USB Serial Port" {
-		t.Errorf("PortInfo.Description = %s, want 'USB Serial Port'", portInfo.Description)
+	if portInfo.Product != "USB Serial Port" {
+		t.Errorf("PortInfo.Product = %s, want 'USB Serial Port'", portInfo.Product)
 	}
 
 	if portInfo.VID != "1234" {

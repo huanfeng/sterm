@@ -152,7 +152,7 @@ func (app *Application) logDebug(format string, args ...interface{}) {
 		msg := fmt.Sprintf(format, args...)
 		timestamp := time.Now().Format("15:04:05.000")
 		fmt.Fprintf(app.debugLog, "[%s] %s\n", timestamp, msg)
-		app.debugLog.Sync() // Ensure it's written immediately
+		_ = app.debugLog.Sync() // Ensure it's written immediately
 	}
 }
 
@@ -326,17 +326,17 @@ func (app *Application) initializeComponents() error {
 // setupShortcuts sets up application shortcuts
 func (app *Application) setupShortcuts() {
 	// Exit shortcut - use Ctrl+Shift+Q to avoid conflict with terminal
-	app.shortcuts.SetShortcutHandler("exit", func() error {
+	_ = app.shortcuts.SetShortcutHandler("exit", func() error {
 		return app.Stop()
 	})
 
 	// Save history shortcut
-	app.shortcuts.SetShortcutHandler("save", func() error {
+	_ = app.shortcuts.SetShortcutHandler("save", func() error {
 		return app.SaveHistory("")
 	})
 
 	// Clear screen shortcut
-	app.shortcuts.SetShortcutHandler("clear", func() error {
+	_ = app.shortcuts.SetShortcutHandler("clear", func() error {
 		return app.ClearScreen()
 	})
 
@@ -356,12 +356,12 @@ func (app *Application) setupShortcuts() {
 	)
 
 	// Disconnect shortcut
-	app.shortcuts.SetShortcutHandler("disconnect", func() error {
+	_ = app.shortcuts.SetShortcutHandler("disconnect", func() error {
 		return app.Disconnect()
 	})
 
 	// Help shortcut - show main menu which contains help and options
-	app.shortcuts.SetShortcutHandler("help", func() error {
+	_ = app.shortcuts.SetShortcutHandler("help", func() error {
 		if app.mainMenu != nil && app.mainMenu.IsVisible() {
 			app.hideMainMenu()
 		} else {
@@ -408,21 +408,21 @@ func (app *Application) Start() error {
 		if app.serialPort != nil && app.serialPort.IsOpen() {
 			// Send terminal type response based on configuration
 			if app.config.TerminalType == "vt100" {
-				app.serialPort.Write([]byte("\x1b[?1;2c")) // VT100 with AVO
+				_, _ = app.serialPort.Write([]byte("\x1b[?1;2c")) // VT100 with AVO
 			} else if app.config.TerminalType == "xterm" {
-				app.serialPort.Write([]byte("\x1b[?62;c")) // xterm
+				_, _ = app.serialPort.Write([]byte("\x1b[?62;c")) // xterm
 			}
 
 			// Send window size using stty-compatible format
 			// Some systems expect: ESC[8;<height>;<width>t
 			// Others use environment variables or stty
 			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", terminalHeight, width)
-			app.serialPort.Write([]byte(sizeSeq))
+			_, _ = app.serialPort.Write([]byte(sizeSeq))
 
 			// Also try sending as environment variable format
 			// This helps with programs that use LINES/COLUMNS
 			envSeq := fmt.Sprintf("\x1b]0;LINES=%d;COLUMNS=%d\x07", terminalHeight, width)
-			app.serialPort.Write([]byte(envSeq))
+			_, _ = app.serialPort.Write([]byte(envSeq))
 
 			app.logDebug("Sent initial terminal size %dx%d to remote", width, terminalHeight)
 		}
@@ -464,7 +464,7 @@ func (app *Application) Stop() error {
 	if app.screen != nil {
 		app.logDebug("Posting interrupt event")
 		// Post a resize event to wake up PollEvent
-		app.screen.PostEvent(tcell.NewEventResize(0, 0))
+		_ = app.screen.PostEvent(tcell.NewEventResize(0, 0))
 	}
 
 	// Close serial port first to stop I/O
@@ -475,7 +475,7 @@ func (app *Application) Stop() error {
 
 	// Stop terminal
 	if app.terminal != nil {
-		app.terminal.Stop()
+		_ = app.terminal.Stop()
 	}
 
 	app.logDebug("Waiting for goroutines to finish...")
@@ -510,7 +510,7 @@ func (app *Application) Stop() error {
 	// Save history if configured and debug mode is enabled
 	if app.config.SaveHistory && app.debugMode && app.historyMgr != nil && app.session != nil {
 		filename := fmt.Sprintf("session_%s.log", app.session.ID)
-		app.historyMgr.SaveToFile(filename, app.config.HistoryFormat)
+		_ = app.historyMgr.SaveToFile(filename, app.config.HistoryFormat)
 	}
 
 	// Close debug log
@@ -549,11 +549,11 @@ func (app *Application) handleSerialInput() {
 				data := buffer[:n]
 
 				// Process in terminal
-				app.terminal.ProcessOutput(data)
+				_ = app.terminal.ProcessOutput(data)
 
 				// Save to history
 				if app.historyMgr != nil {
-					app.historyMgr.Write(data, history.DirectionOutput)
+					_ = app.historyMgr.Write(data, history.DirectionOutput)
 				}
 
 				// Update session stats
@@ -609,7 +609,7 @@ func (app *Application) handleUserInput() {
 			app.logDebug("handleUserInput: context done")
 			// Post an event to break PollEvent
 			if app.screen != nil {
-				app.screen.PostEvent(tcell.NewEventResize(0, 0))
+				_ = app.screen.PostEvent(tcell.NewEventResize(0, 0))
 			}
 			return
 		case <-exitChan:
@@ -698,9 +698,9 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 	if ev.Key() == tcell.KeyF8 {
 		app.logDebug("F8 pause/resume key pressed")
 		if app.isPaused {
-			app.Resume()
+			_ = app.Resume()
 		} else {
-			app.Pause()
+			_ = app.Pause()
 		}
 		app.updateDisplay() // Force immediate display refresh
 		return
@@ -944,7 +944,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 		// Local echo - display the input locally if enabled
 		if app.localEcho && app.terminal != nil {
 			// Process the input locally to show it on screen
-			app.terminal.ProcessOutput(data)
+			_ = app.terminal.ProcessOutput(data)
 		}
 
 		// Send to serial port
@@ -953,7 +953,7 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 
 			// Save to history
 			if app.historyMgr != nil {
-				app.historyMgr.Write(data[:n], history.DirectionInput)
+				_ = app.historyMgr.Write(data[:n], history.DirectionInput)
 			}
 
 			// Update session stats
@@ -1015,7 +1015,7 @@ func (app *Application) handleResize() {
 	width, height := app.screen.Size()
 	// Reserve 1 line for status bar
 	terminalHeight := height - 1
-	app.terminal.Resize(width, terminalHeight)
+	_ = app.terminal.Resize(width, terminalHeight)
 
 	// Only send terminal size update if explicitly configured
 	// Most serial devices don't support this and it causes garbage output
@@ -1023,7 +1023,7 @@ func (app *Application) handleResize() {
 		if app.serialPort != nil && app.serialPort.IsOpen() && !app.isPaused {
 			// Send the actual terminal size (without status bar)
 			sizeSeq := fmt.Sprintf("\x1b[8;%d;%dt", terminalHeight, width)
-			app.serialPort.Write([]byte(sizeSeq))
+			_, _ = app.serialPort.Write([]byte(sizeSeq))
 
 			app.logDebug("Window resized to %dx%d, sent size update to remote", width, terminalHeight)
 		}
@@ -1559,7 +1559,7 @@ func (app *Application) setupMenu() {
 		app.logDebug("Menu: Exit")
 		app.mainMenu.Hide() // Close menu before exiting
 		go func() {
-			app.Stop()
+			_ = app.Stop()
 		}()
 		return nil
 	})

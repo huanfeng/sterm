@@ -4,18 +4,12 @@ package ui
 import (
 	"fmt"
 	"sterm/pkg/config"
-	"sterm/pkg/history"
 	"sterm/pkg/serial"
-	"sterm/pkg/terminal"
 	"time"
 )
 
 // Application represents the main application controller
 type Application struct {
-	terminal       terminal.Terminal
-	configManager  config.ConfigManager
-	historyManager history.HistoryManager
-	serialPort     serial.SerialPort
 	currentSession *Session
 	isRunning      bool
 	version        string

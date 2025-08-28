@@ -187,7 +187,7 @@ func RunHeadless(serialConfig serial.SerialConfig, logFile string) error {
 	if err := app.Start(); err != nil {
 		return fmt.Errorf("failed to start application: %w", err)
 	}
-	defer app.Stop()
+	defer func() { _ = app.Stop() }()
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)

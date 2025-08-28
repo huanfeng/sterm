@@ -1,0 +1,50 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  disable:
+    - gosec
+    - exhaustive
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    
+  staticcheck:
+    checks: ["all", "-SA1019", "-SA9003"]
+
+issues:
+  exclude-rules:
+    # Exclude errcheck on test files
+    - path: _test\.go
+      linters:
+        - errcheck
+
+    # Ignore unused errors in certain files
+    - path: pkg/terminal/terminal.go
+      text: "func.*is unused"
+      
+    # Ignore shift errors in UTF-8 decoding
+    - path: pkg/terminal/terminal.go
+      text: "shift.*too small for shift"
+      
+    # Allow empty branches
+    - text: "SA9003"
+      linters:
+        - staticcheck
+        
+    # Allow possible nil pointer dereferences in tests
+    - path: _test\.go
+      text: "SA5011"
+      linters:
+        - staticcheck
+
+  max-issues-per-linter: 50
+  max-same-issues: 10

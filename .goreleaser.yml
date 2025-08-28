@@ -8,8 +8,6 @@ builds:
   - id: sterm
     main: .
     binary: sterm
-    env:
-      - CGO_ENABLED=0
     goos:
       - linux
       - windows

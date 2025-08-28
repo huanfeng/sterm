@@ -16,6 +16,7 @@ var (
 	rootCmd = &cobra.Command{
 		Use:               "sterm",
 		Short:             "A cross-platform serial port terminal emulator",
+		Long:              `STerm is a modern, cross-platform serial port terminal emulator with support for UART communication, ANSI escape sequences, and interactive terminal features.`,
 		Version:           "1.0.0",
 		Run:               runTerminal,
 		DisableAutoGenTag: true,
@@ -54,5 +55,5 @@ func initConfig() {
 // runTerminal is the main entry point for the terminal
 func runTerminal(cmd *cobra.Command, args []string) {
 	// Always show help when root command is called without subcommands
-	cmd.Help()
+	_ = cmd.Help()
 }

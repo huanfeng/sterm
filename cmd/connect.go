@@ -15,7 +15,6 @@ import (
 
 var (
 	// Connect command flags
-	connectPort     string
 	connectBaudRate int
 	connectDataBits int
 	connectStopBits int
@@ -136,7 +135,7 @@ func runConnect(cmd *cobra.Command, args []string) {
 		}
 
 		// Update last used time
-		configManager.UpdateLastUsed(target)
+		_ = configManager.UpdateLastUsed(target)
 	}
 
 	// Test connection

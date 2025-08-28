@@ -28,51 +28,15 @@ func (c SerialConfig) Validate() error {
 		return fmt.Errorf("port cannot be empty")
 	}
 
-	// Common standard baud rates
-	standardBaudRates := []int{
-		110, 300, 600, 1200, 2400, 4800, 9600, 14400, 19200, 38400,
-		57600, 115200, 128000, 230400, 256000, 460800, 500000, 576000,
-		921600, 1000000, 1152000, 1500000, 2000000, 2500000, 3000000,
-		3500000, 4000000,
-	}
-
-	// Special baud rates often used in embedded systems
-	specialBaudRates := []int{
-		74880,   // ESP8266 boot mode
-		250000,  // 3D printers
-		876000,  // Some USB-UART chips
-		1843200, // High speed UART
-	}
-
-	// Check if it's a standard rate
-	isStandard := false
-	for _, rate := range standardBaudRates {
-		if c.BaudRate == rate {
-			isStandard = true
-			break
-		}
-	}
-
-	// Check if it's a special rate
-	if !isStandard {
-		for _, rate := range specialBaudRates {
-			if c.BaudRate == rate {
-				isStandard = true
-				break
-			}
-		}
-	}
-
-	// Allow any positive baud rate, but warn for non-standard rates
+	// Allow any positive baud rate
+	// The go.bug.st/serial library will handle hardware limitations
 	if c.BaudRate <= 0 {
 		return fmt.Errorf("baud rate must be positive, got: %d", c.BaudRate)
 	}
 
 	// For very high or unusual rates, just warn (don't error)
-	if !isStandard && c.BaudRate > 4000000 {
-		// This is just a warning in the validation, actual support depends on hardware
-		// The go.bug.st/serial library will handle hardware limitations
-	}
+	// This is just a warning in the validation, actual support depends on hardware
+	// The go.bug.st/serial library will handle hardware limitations
 
 	if c.DataBits < 5 || c.DataBits > 8 {
 		return fmt.Errorf("data bits must be between 5 and 8, got: %d", c.DataBits)
@@ -814,7 +778,7 @@ func (hc *HealthChecker) CheckHealth() error {
 
 	// Restore original timeout after health check
 	defer func() {
-		hc.port.SetReadTimeout(originalTimeout)
+		_ = hc.port.SetReadTimeout(originalTimeout)
 	}()
 
 	n, err := hc.port.Read(buffer)

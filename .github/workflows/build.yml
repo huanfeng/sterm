@@ -15,19 +15,19 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ['1.21', '1.22']
+        go: ['1.22']
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go }}
 
     - name: Cache Go modules
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/go/pkg/mod
         key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
@@ -38,10 +38,14 @@ jobs:
       run: go mod download
 
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      env:
+        CI: true
+        TERM: xterm
+      shell: bash
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       if: matrix.os == 'ubuntu-latest' && matrix.go == '1.21'
       with:
         file: ./coverage.out
@@ -49,38 +53,41 @@ jobs:
         name: codecov-umbrella
 
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            output: sterm-linux-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            output: sterm-windows-amd64.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            output: sterm-darwin-amd64
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version: '1.22'
 
-    - name: Build for all platforms
-      run: |
-        # Windows
-        GOOS=windows GOARCH=amd64 go build -o build/sterm-windows-amd64.exe .
-        GOOS=windows GOARCH=386 go build -o build/sterm-windows-386.exe .
-
-        # Linux
-        GOOS=linux GOARCH=amd64 go build -o build/sterm-linux-amd64 .
-        GOOS=linux GOARCH=arm64 go build -o build/sterm-linux-arm64 .
-        GOOS=linux GOARCH=arm go build -o build/sterm-linux-arm .
-
-        # macOS
-        GOOS=darwin GOARCH=amd64 go build -o build/sterm-darwin-amd64 .
-        GOOS=darwin GOARCH=arm64 go build -o build/sterm-darwin-arm64 .
+    - name: Build
+      run: go build -o build/${{ matrix.output }} .
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: binaries
+        name: binary-${{ matrix.os }}
         path: build/
 
   release:
@@ -91,13 +98,14 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Download artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
-        name: binaries
         path: build/
+        pattern: binary-*
+        merge-multiple: true
 
     - name: Create release archives
       run: |
@@ -125,7 +133,7 @@ jobs:
         sha256sum * > checksums.txt
 
     - name: Upload release assets
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');

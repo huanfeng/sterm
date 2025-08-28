@@ -165,7 +165,7 @@ func (fcm *FileConfigManager) LoadConfig(name string) (serial.SerialConfig, erro
 	storage.Configs[name] = configInfo
 
 	// Save updated last used time (ignore errors for this non-critical update)
-	fcm.saveStorage(storage)
+	_ = fcm.saveStorage(storage)
 
 	return configInfo.Config, nil
 }

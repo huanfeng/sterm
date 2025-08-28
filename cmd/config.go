@@ -105,7 +105,7 @@ func init() {
 	saveCmd.Flags().IntVarP(&configStopBits, "stop", "s", 1, "stop bits")
 	saveCmd.Flags().StringVar(&configParity, "parity", "none", "parity")
 	saveCmd.Flags().IntVarP(&configTimeout, "timeout", "t", 10, "timeout in seconds")
-	saveCmd.MarkFlagRequired("port")
+	_ = saveCmd.MarkFlagRequired("port")
 }
 
 func runSaveConfig(cmd *cobra.Command, args []string) {

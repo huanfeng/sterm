@@ -392,7 +392,7 @@ func decodeUTF8(bytes []byte) (rune, int) {
 		// For E4 B8 AD: b0=4, b1=38, b2=2D -> 4000 + E00 + 2D = 4E2D (中)
 		return r, 3
 	case 4:
-		r := rune((bytes[0]&0x07)<<18 | (bytes[1]&0x3F)<<12 | (bytes[2]&0x3F)<<6 | (bytes[3] & 0x3F))
+		r := rune(int32(bytes[0]&0x07)<<18 | int32(bytes[1]&0x3F)<<12 | int32(bytes[2]&0x3F)<<6 | int32(bytes[3]&0x3F))
 		return r, 4
 	default:
 		return 0, 0
@@ -1295,7 +1295,7 @@ func (te *TerminalEmulator) ProcessInput(input []byte) error {
 
 		// Log input to history
 		if te.historyManager != nil {
-			te.historyManager.Write(input, history.DirectionOutput)
+			_ = te.historyManager.Write(input, history.DirectionOutput)
 		}
 	}
 
@@ -1310,7 +1310,7 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 
 	// Log output to history
 	if te.historyManager != nil {
-		te.historyManager.Write(output, history.DirectionInput)
+		_ = te.historyManager.Write(output, history.DirectionInput)
 	}
 
 	// Debug log the raw bytes received and decoder state (disabled for performance)
@@ -1435,7 +1435,7 @@ func (te *TerminalEmulator) executeAction(action Action) {
 		// Send response back to remote device
 		if te.serialPort != nil && te.serialPort.IsOpen() {
 			response := action.Data.(string)
-			te.serialPort.Write([]byte(response))
+			_, _ = te.serialPort.Write([]byte(response))
 		}
 	case ActionSetTabStop:
 		te.setTabStop()
@@ -2087,7 +2087,7 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	te.tabStops = make(map[int]bool)
 
 	// Copy existing tab stops that are still within bounds
-	for col, _ := range oldTabStops {
+	for col := range oldTabStops {
 		if col < width {
 			te.tabStops[col] = true
 		}
@@ -2570,16 +2570,17 @@ func (mh *MouseHandler) buttonToBtnEventCode(button MouseButton, action MouseAct
 }
 
 // buttonToAnyEventCode converts button and action to any event code
-func (mh *MouseHandler) buttonToAnyEventCode(button MouseButton, action MouseAction) int {
-	switch action {
-	case MouseActionMove:
-		return 35 // Motion code
-	case MouseActionPress, MouseActionRelease, MouseActionDrag:
-		return mh.buttonToBtnEventCode(button, action)
-	default:
-		return -1
-	}
-}
+// TODO: Uncomment when mouse support is fully implemented
+// func (mh *MouseHandler) buttonToAnyEventCode(button MouseButton, action MouseAction) int {
+// 	switch action {
+// 	case MouseActionMove:
+// 		return 35 // Motion code
+// 	case MouseActionPress, MouseActionRelease, MouseActionDrag:
+// 		return mh.buttonToBtnEventCode(button, action)
+// 	default:
+// 		return -1
+// 	}
+// }
 
 // Add mouse support to TerminalRenderer
 
@@ -2638,34 +2639,36 @@ func (tr *TerminalRenderer) ProcessMouseEvent(event *tcell.EventMouse) error {
 }
 
 // Add mouse event handling to the event loop
-func (tr *TerminalRenderer) handleMouseEvent(event *tcell.EventMouse) {
-	if err := tr.ProcessMouseEvent(event); err != nil {
-		// Log error or handle it appropriately
-		// For now, we'll silently ignore errors
-	}
-}
+// TODO: Uncomment when mouse support is fully implemented
+// func (tr *TerminalRenderer) handleMouseEvent(event *tcell.EventMouse) {
+// 	if err := tr.ProcessMouseEvent(event); err != nil {
+// 		// Log error or handle it appropriately
+// 		// For now, we'll silently ignore errors
+// 	}
+// }
 
 // Update the handleEvents method to process mouse events
-func (tr *TerminalRenderer) handleEventsWithMouse() {
-	for tr.running {
-		event := tr.screen.PollEvent()
-		if event == nil {
-			continue
-		}
-
-		switch ev := event.(type) {
-		case *tcell.EventMouse:
-			tr.handleMouseEvent(ev)
-		default:
-			// Handle other events
-			select {
-			case tr.events <- event:
-			default:
-				// Event channel is full, drop event
-			}
-		}
-	}
-}
+// TODO: Uncomment when mouse support is fully implemented
+// func (tr *TerminalRenderer) handleEventsWithMouse() {
+// 	for tr.running {
+// 		event := tr.screen.PollEvent()
+// 		if event == nil {
+// 			continue
+// 		}
+//
+// 		switch ev := event.(type) {
+// 		case *tcell.EventMouse:
+// 			tr.handleMouseEvent(ev)
+// 		default:
+// 			// Handle other events
+// 			select {
+// 			case tr.events <- event:
+// 			default:
+// 				// Event channel is full, drop event
+// 			}
+// 		}
+// 	}
+// }
 
 // KeyEvent represents a keyboard event
 type KeyEvent struct {
@@ -3707,15 +3710,16 @@ func (ip *InputProcessor) SetShortcutManager(sm *ShortcutManager) {
 }
 
 // Enhanced processKeyEvent with shortcut handling
-func (ip *InputProcessor) processKeyEventWithShortcuts(event *tcell.EventKey, sm *ShortcutManager) error {
-	// First check for shortcuts
-	if sm != nil {
-		handled, err := sm.ProcessKeyEvent(event.Key(), event.Rune(), event.Modifiers())
-		if handled {
-			return err // Shortcut was handled, don't process as regular input
-		}
-	}
-
-	// Process as regular key input
-	return ip.processKeyEvent(event)
-}
+// TODO: Uncomment when shortcut integration is needed
+// func (ip *InputProcessor) processKeyEventWithShortcuts(event *tcell.EventKey, sm *ShortcutManager) error {
+// 	// First check for shortcuts
+// 	if sm != nil {
+// 		handled, err := sm.ProcessKeyEvent(event.Key(), event.Rune(), event.Modifiers())
+// 		if handled {
+// 			return err // Shortcut was handled, don't process as regular input
+// 		}
+// 	}
+//
+// 	// Process as regular key input
+// 	return ip.processKeyEvent(event)
+// }

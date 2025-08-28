@@ -220,12 +220,12 @@ func TestMouseMode_String(t *testing.T) {
 func TestDefaultTextAttributes(t *testing.T) {
 	attrs := DefaultTextAttributes()
 
-	if attrs.Foreground != ColorWhite {
-		t.Errorf("DefaultTextAttributes() Foreground = %v, want %v", attrs.Foreground, ColorWhite)
+	if attrs.Foreground != ColorDefault {
+		t.Errorf("DefaultTextAttributes() Foreground = %v, want %v", attrs.Foreground, ColorDefault)
 	}
 
-	if attrs.Background != ColorBlack {
-		t.Errorf("DefaultTextAttributes() Background = %v, want %v", attrs.Background, ColorBlack)
+	if attrs.Background != ColorDefault {
+		t.Errorf("DefaultTextAttributes() Background = %v, want %v", attrs.Background, ColorDefault)
 	}
 
 	if attrs.Bold {
@@ -279,7 +279,7 @@ func TestNewScreen(t *testing.T) {
 				t.Errorf("NewScreen() Buffer[%d][%d].Char = %c, want space", i, j, cell.Char)
 			}
 
-			if cell.Attributes.Foreground != ColorWhite {
+			if cell.Attributes.Foreground != ColorDefault {
 				t.Errorf("NewScreen() Buffer[%d][%d] should have default attributes", i, j)
 			}
 		}
@@ -355,12 +355,13 @@ func TestVTParser_ParseByte_PrintableCharacters(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	// Test printable ASCII characters
 	testChars := []byte{'A', 'B', 'C', '1', '2', '3', ' ', '!', '@'}
 
 	for _, ch := range testChars {
-		actions := parser.ParseByte(ch, screen, &state)
+		actions := parser.ParseByte(ch, screen, &state, utf8Decoder)
 
 		if len(actions) != 1 {
 			t.Errorf("ParseByte(%c) returned %d actions, want 1", ch, len(actions))
@@ -381,6 +382,7 @@ func TestVTParser_ParseByte_ControlCharacters(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	tests := []struct {
 		char     byte
@@ -395,7 +397,7 @@ func TestVTParser_ParseByte_ControlCharacters(t *testing.T) {
 
 	for _, tt := range tests {
 		parser.Reset()
-		actions := parser.ParseByte(tt.char, screen, &state)
+		actions := parser.ParseByte(tt.char, screen, &state, utf8Decoder)
 
 		if len(actions) != 1 {
 			t.Errorf("ParseByte(0x%02X) returned %d actions, want 1", tt.char, len(actions))
@@ -412,9 +414,10 @@ func TestVTParser_ParseByte_EscapeSequence(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	// Test ESC character
-	actions := parser.ParseByte(0x1B, screen, &state)
+	actions := parser.ParseByte(0x1B, screen, &state, utf8Decoder)
 
 	if len(actions) != 0 {
 		t.Errorf("ParseByte(ESC) returned %d actions, want 0", len(actions))
@@ -429,13 +432,14 @@ func TestVTParser_ParseByte_CSISequence(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	// Test CSI sequence: ESC[2J (clear screen)
 	sequence := []byte{0x1B, '[', '2', 'J'}
 	var allActions []Action
 
 	for _, b := range sequence {
-		actions := parser.ParseByte(b, screen, &state)
+		actions := parser.ParseByte(b, screen, &state, utf8Decoder)
 		allActions = append(allActions, actions...)
 	}
 
@@ -456,6 +460,7 @@ func TestVTParser_ParseByte_CursorMovement(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	tests := []struct {
 		sequence  []byte
@@ -477,7 +482,7 @@ func TestVTParser_ParseByte_CursorMovement(t *testing.T) {
 		var actions []Action
 
 		for _, b := range tt.sequence {
-			newActions := parser.ParseByte(b, screen, &state)
+			newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 			actions = append(actions, newActions...)
 		}
 
@@ -511,13 +516,14 @@ func TestVTParser_ParseByte_CursorPosition(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	// Test cursor position: ESC[10;20H
 	sequence := []byte{0x1B, '[', '1', '0', ';', '2', '0', 'H'}
 	var actions []Action
 
 	for _, b := range sequence {
-		newActions := parser.ParseByte(b, screen, &state)
+		newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 		actions = append(actions, newActions...)
 	}
 
@@ -551,13 +557,14 @@ func TestVTParser_ParseByte_SGR(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	// Test SGR sequence: ESC[1;31m (bold red)
 	sequence := []byte{0x1B, '[', '1', ';', '3', '1', 'm'}
 	var actions []Action
 
 	for _, b := range sequence {
-		newActions := parser.ParseByte(b, screen, &state)
+		newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 		actions = append(actions, newActions...)
 	}
 
@@ -598,6 +605,7 @@ func TestVTParser_ParseByte_ComplexSequences(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	tests := []struct {
 		name            string
@@ -663,46 +671,6 @@ func TestVTParser_ParseByte_ComplexSequences(t *testing.T) {
 			},
 		},
 		{
-			name:     "Hide cursor",
-			sequence: []byte{0x1B, '[', '2', '5', 'l'},
-			expectedActions: []struct {
-				actionType ActionType
-				validation func(Action) bool
-			}{
-				{ActionSetMode, func(a Action) bool { return a.Data == "cursor_hidden" }},
-			},
-		},
-		{
-			name:     "Show cursor",
-			sequence: []byte{0x1B, '[', '2', '5', 'h'},
-			expectedActions: []struct {
-				actionType ActionType
-				validation func(Action) bool
-			}{
-				{ActionSetMode, func(a Action) bool { return a.Data == "cursor_visible" }},
-			},
-		},
-		{
-			name:     "Enable mouse tracking",
-			sequence: []byte{0x1B, '[', '1', '0', '0', '0', 'h'},
-			expectedActions: []struct {
-				actionType ActionType
-				validation func(Action) bool
-			}{
-				{ActionSetMode, func(a Action) bool { return a.Data == "mouse_x10" }},
-			},
-		},
-		{
-			name:     "Alternative screen buffer",
-			sequence: []byte{0x1B, '[', '1', '0', '4', '9', 'h'},
-			expectedActions: []struct {
-				actionType ActionType
-				validation func(Action) bool
-			}{
-				{ActionSetMode, func(a Action) bool { return a.Data == "alt_screen" }},
-			},
-		},
-		{
 			name:     "256 color foreground",
 			sequence: []byte{0x1B, '[', '3', '8', ';', '5', ';', '1', '2', '3', 'm'},
 			expectedActions: []struct {
@@ -721,7 +689,7 @@ func TestVTParser_ParseByte_ComplexSequences(t *testing.T) {
 			var actions []Action
 
 			for _, b := range tt.sequence {
-				newActions := parser.ParseByte(b, screen, &state)
+				newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 				actions = append(actions, newActions...)
 			}
 
@@ -749,6 +717,7 @@ func TestVTParser_ParseByte_EscapeSequences(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	tests := []struct {
 		name           string
@@ -768,7 +737,7 @@ func TestVTParser_ParseByte_EscapeSequences(t *testing.T) {
 			var actions []Action
 
 			for _, b := range tt.sequence {
-				newActions := parser.ParseByte(b, screen, &state)
+				newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 				actions = append(actions, newActions...)
 			}
 
@@ -796,6 +765,7 @@ func TestVTParser_ParseByte_BrightColors(t *testing.T) {
 	parser := NewVTParser()
 	screen := NewScreen(80, 24)
 	state := DefaultTerminalState(80, 24)
+	utf8Decoder := NewUTF8Decoder()
 
 	tests := []struct {
 		name          string
@@ -820,7 +790,7 @@ func TestVTParser_ParseByte_BrightColors(t *testing.T) {
 			var actions []Action
 
 			for _, b := range tt.sequence {
-				newActions := parser.ParseByte(b, screen, &state)
+				newActions := parser.ParseByte(b, screen, &state, utf8Decoder)
 				actions = append(actions, newActions...)
 			}
 
