@@ -195,6 +195,7 @@ type TerminalEmulator struct {
 	tabStops       map[int]bool // Custom tab stops
 	utf8Decoder    *UTF8Decoder // UTF-8 decoder for multi-byte characters
 	logger         Logger       // Logger for debug output
+	mu             sync.RWMutex // Protect concurrent access
 
 	// Scrollback buffer for history
 	scrollbackBuffer [][]Cell // History lines
@@ -254,12 +255,23 @@ type Screen struct {
 	Height int
 	Buffer [][]Cell
 	Dirty  bool
+
+	// Dirty region tracking
+	DirtyLines map[int]bool // Track which lines are dirty
+	DirtyMinX  int          // Minimum dirty X coordinate
+	DirtyMaxX  int          // Maximum dirty X coordinate
+	DirtyMinY  int          // Minimum dirty Y coordinate
+	DirtyMaxY  int          // Maximum dirty Y coordinate
+
+	// Mutex for thread safety
+	mutex sync.RWMutex
 }
 
 // Cell represents a single character cell in the terminal
 type Cell struct {
 	Char       rune           `json:"char"`
 	Attributes TextAttributes `json:"attributes"`
+	Dirty      bool           `json:"-"` // Track if this cell is dirty
 }
 
 // NewScreen creates a new screen buffer
@@ -271,16 +283,120 @@ func NewScreen(width, height int) *Screen {
 			buffer[i][j] = Cell{
 				Char:       ' ',
 				Attributes: DefaultTextAttributes(),
+				Dirty:      true,
 			}
 		}
 	}
 
 	return &Screen{
-		Width:  width,
-		Height: height,
-		Buffer: buffer,
-		Dirty:  true,
+		Width:      width,
+		Height:     height,
+		Buffer:     buffer,
+		Dirty:      true,
+		DirtyLines: make(map[int]bool),
+		DirtyMinX:  0,
+		DirtyMaxX:  width - 1,
+		DirtyMinY:  0,
+		DirtyMaxY:  height - 1,
 	}
+}
+
+// MarkDirty marks a region as dirty
+func (s *Screen) MarkDirty(x, y int) {
+	// Bounds check first - prevent out of bounds access
+	if y < 0 || y >= s.Height || x < 0 || x >= s.Width {
+		// Ignore out of bounds coordinates
+		return
+	}
+
+	// Extra safety: also check buffer bounds
+	if y >= len(s.Buffer) {
+		return
+	}
+	if len(s.Buffer) > 0 && len(s.Buffer[y]) > 0 && x >= len(s.Buffer[y]) {
+		return
+	}
+
+	// Lock for concurrent access
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.Dirty = true
+
+	// Initialize map if nil
+	if s.DirtyLines == nil {
+		s.DirtyLines = make(map[int]bool)
+	}
+
+	s.DirtyLines[y] = true
+
+	if len(s.DirtyLines) == 1 {
+		// First dirty cell, initialize bounds
+		s.DirtyMinX = x
+		s.DirtyMaxX = x
+		s.DirtyMinY = y
+		s.DirtyMaxY = y
+	} else {
+		// Update bounds
+		if x < s.DirtyMinX {
+			s.DirtyMinX = x
+		}
+		if x > s.DirtyMaxX {
+			s.DirtyMaxX = x
+		}
+		if y < s.DirtyMinY {
+			s.DirtyMinY = y
+		}
+		if y > s.DirtyMaxY {
+			s.DirtyMaxY = y
+		}
+	}
+
+	if y >= 0 && y < len(s.Buffer) && x >= 0 && x < len(s.Buffer[y]) {
+		s.Buffer[y][x].Dirty = true
+	}
+}
+
+// ClearDirty clears all dirty flags
+func (s *Screen) ClearDirty() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.Dirty = false
+	s.DirtyLines = make(map[int]bool)
+	// Initialize to invalid range (min > max) so first dirty cell will reset them
+	s.DirtyMinX = s.Width
+	s.DirtyMaxX = -1
+	s.DirtyMinY = s.Height
+	s.DirtyMaxY = -1
+
+	for y := range s.Buffer {
+		for x := range s.Buffer[y] {
+			s.Buffer[y][x].Dirty = false
+		}
+	}
+}
+
+// IsLineDirty checks if a line is marked as dirty (thread-safe)
+func (s *Screen) IsLineDirty(y int) bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	if s.DirtyLines == nil {
+		return false
+	}
+	return s.DirtyLines[y]
+}
+
+// GetDirtyBounds returns the dirty region bounds (thread-safe)
+func (s *Screen) GetDirtyBounds() (minX, maxX, minY, maxY int, hasDirty bool) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	if !s.Dirty || len(s.DirtyLines) == 0 {
+		return 0, 0, 0, 0, false
+	}
+	return s.DirtyMinX, s.DirtyMaxX, s.DirtyMinY, s.DirtyMaxY, true
 }
 
 // UTF8Decoder handles UTF-8 character decoding
@@ -1304,6 +1420,20 @@ func (te *TerminalEmulator) ProcessInput(input []byte) error {
 
 // ProcessOutput processes output from the serial port
 func (te *TerminalEmulator) ProcessOutput(output []byte) error {
+	// Add panic recovery to prevent crashes
+	defer func() {
+		if r := recover(); r != nil {
+			te.logDebug("PANIC in ProcessOutput: %v", r)
+			// Reset parser state on panic
+			te.parser.Reset()
+			te.utf8Decoder.Reset()
+		}
+	}()
+
+	// Lock for thread safety
+	te.mu.Lock()
+	defer te.mu.Unlock()
+
 	if !te.isRunning {
 		return fmt.Errorf("terminal is not running")
 	}
@@ -1324,8 +1454,16 @@ func (te *TerminalEmulator) ProcessOutput(output []byte) error {
 
 	// Process the output
 	i := 0
+	processedCount := 0
 	for i < len(output) {
 		b := output[i]
+		processedCount++
+
+		// Safety check for infinite loops
+		if processedCount > len(output)*2 {
+			te.logDebug("ERROR: Possible infinite loop in ProcessOutput, breaking. i=%d, len=%d", i, len(output))
+			break
+		}
 
 		// Debug logging for escape sequences (disabled for performance)
 		// if te.parser.State != StateGround {
@@ -1495,17 +1633,32 @@ func (te *TerminalEmulator) printChar(ch rune) {
 	// Get current screen buffer
 	screen := te.GetScreen()
 
-	// Set character in screen buffer
-	screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
-		Char:       ch,
-		Attributes: te.state.Attributes,
+	// Bounds check before writing to buffer
+	if te.state.CursorY >= 0 && te.state.CursorY < len(screen.Buffer) &&
+		te.state.CursorX >= 0 && te.state.CursorX < len(screen.Buffer[te.state.CursorY]) {
+		// Set character in screen buffer
+		screen.Buffer[te.state.CursorY][te.state.CursorX] = Cell{
+			Char:       ch,
+			Attributes: te.state.Attributes,
+			Dirty:      true,
+		}
+		screen.MarkDirty(te.state.CursorX, te.state.CursorY)
+	} else {
+		te.logDebug("printChar out of bounds: cursor=(%d,%d), screen=%dx%d",
+			te.state.CursorX, te.state.CursorY, screen.Width, screen.Height)
+		return
 	}
 
 	// For wide characters, mark the next cell as continuation
 	if charWidth == 2 && te.state.CursorX+1 < te.state.Width {
-		screen.Buffer[te.state.CursorY][te.state.CursorX+1] = Cell{
-			Char:       0, // Use null character to indicate this cell is part of previous character
-			Attributes: te.state.Attributes,
+		if te.state.CursorY >= 0 && te.state.CursorY < len(screen.Buffer) &&
+			te.state.CursorX+1 >= 0 && te.state.CursorX+1 < len(screen.Buffer[te.state.CursorY]) {
+			screen.Buffer[te.state.CursorY][te.state.CursorX+1] = Cell{
+				Char:       0, // Use null character to indicate this cell is part of previous character
+				Attributes: te.state.Attributes,
+				Dirty:      true,
+			}
+			screen.MarkDirty(te.state.CursorX+1, te.state.CursorY)
 		}
 	}
 
@@ -1583,15 +1736,18 @@ func (te *TerminalEmulator) clearLine(mode int) {
 	switch mode {
 	case 0: // Clear from cursor to end of line
 		for x := te.state.CursorX; x < te.state.Width; x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	case 1: // Clear from beginning of line to cursor
 		for x := 0; x <= te.state.CursorX; x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	case 2: // Clear entire line
 		for x := 0; x < te.state.Width; x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	}
 	screen.Dirty = true
@@ -1642,6 +1798,18 @@ func (te *TerminalEmulator) scroll(direction string) {
 func (te *TerminalEmulator) scrollUp() {
 	screen := te.GetScreen()
 
+	// Validate scroll region bounds
+	if te.state.ScrollBottom >= len(screen.Buffer) {
+		te.state.ScrollBottom = len(screen.Buffer) - 1
+	}
+	if te.state.ScrollTop < 0 {
+		te.state.ScrollTop = 0
+	}
+	if te.state.ScrollTop > te.state.ScrollBottom {
+		te.state.ScrollTop = 0
+		te.state.ScrollBottom = len(screen.Buffer) - 1
+	}
+
 	// Save the top line to scrollback buffer if it's about to be lost
 	if te.state.ScrollTop == 0 && len(screen.Buffer) > 0 {
 		// Copy the top line to scrollback
@@ -1656,16 +1824,25 @@ func (te *TerminalEmulator) scrollUp() {
 	}
 
 	// Move all lines up within scroll region
-	for y := te.state.ScrollTop; y < te.state.ScrollBottom; y++ {
+	for y := te.state.ScrollTop; y < te.state.ScrollBottom && y < len(screen.Buffer)-1; y++ {
 		if y+1 < len(screen.Buffer) {
 			copy(screen.Buffer[y], screen.Buffer[y+1])
+			// Mark entire line as dirty after copying
+			// Use actual buffer width, not state width
+			lineWidth := len(screen.Buffer[y])
+			for x := 0; x < lineWidth; x++ {
+				screen.Buffer[y][x].Dirty = true
+				screen.MarkDirty(x, y)
+			}
 		}
 	}
 
 	// Clear bottom line of scroll region
-	if te.state.ScrollBottom < len(screen.Buffer) {
-		for x := 0; x < te.state.Width && x < len(screen.Buffer[te.state.ScrollBottom]); x++ {
-			screen.Buffer[te.state.ScrollBottom][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+	if te.state.ScrollBottom >= 0 && te.state.ScrollBottom < len(screen.Buffer) {
+		line := screen.Buffer[te.state.ScrollBottom]
+		for x := 0; x < len(line); x++ {
+			line[x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, te.state.ScrollBottom)
 		}
 	}
 }
@@ -1674,17 +1851,38 @@ func (te *TerminalEmulator) scrollUp() {
 func (te *TerminalEmulator) scrollDown() {
 	screen := te.GetScreen()
 
+	// Validate scroll region bounds
+	if te.state.ScrollBottom >= len(screen.Buffer) {
+		te.state.ScrollBottom = len(screen.Buffer) - 1
+	}
+	if te.state.ScrollTop < 0 {
+		te.state.ScrollTop = 0
+	}
+	if te.state.ScrollTop > te.state.ScrollBottom {
+		te.state.ScrollTop = 0
+		te.state.ScrollBottom = len(screen.Buffer) - 1
+	}
+
 	// Move all lines down within scroll region
 	for y := te.state.ScrollBottom; y > te.state.ScrollTop; y-- {
-		if y-1 >= 0 && y < len(screen.Buffer) && y-1 < len(screen.Buffer) {
+		if y > 0 && y < len(screen.Buffer) && y-1 >= 0 && y-1 < len(screen.Buffer) {
 			copy(screen.Buffer[y], screen.Buffer[y-1])
+			// Mark entire line as dirty after copying
+			// Use actual buffer width, not state width
+			lineWidth := len(screen.Buffer[y])
+			for x := 0; x < lineWidth; x++ {
+				screen.Buffer[y][x].Dirty = true
+				screen.MarkDirty(x, y)
+			}
 		}
 	}
 
 	// Clear top line of scroll region
 	if te.state.ScrollTop >= 0 && te.state.ScrollTop < len(screen.Buffer) {
-		for x := 0; x < te.state.Width && x < len(screen.Buffer[te.state.ScrollTop]); x++ {
-			screen.Buffer[te.state.ScrollTop][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		line := screen.Buffer[te.state.ScrollTop]
+		for x := 0; x < len(line); x++ {
+			line[x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, te.state.ScrollTop)
 		}
 	}
 }
@@ -1926,6 +2124,20 @@ func (te *TerminalEmulator) tab() {
 
 // newline moves cursor to next line
 func (te *TerminalEmulator) newline() {
+	// Ensure scroll region is valid based on actual buffer size
+	screen := te.GetScreen()
+	bufferHeight := len(screen.Buffer)
+	if bufferHeight == 0 {
+		return
+	}
+
+	if te.state.ScrollBottom >= bufferHeight {
+		te.state.ScrollBottom = bufferHeight - 1
+	}
+	if te.state.ScrollTop >= bufferHeight {
+		te.state.ScrollTop = 0
+	}
+
 	te.state.CursorY++
 	if te.state.CursorY >= te.state.Height {
 		te.scroll("up")
@@ -1990,8 +2202,16 @@ func (te *TerminalEmulator) insertChar(count int) {
 
 // setScrollRegion sets the scroll region
 func (te *TerminalEmulator) setScrollRegion(region ScrollRegion) {
-	te.state.ScrollTop = max(0, min(te.state.Height-1, region.Top))
-	te.state.ScrollBottom = max(te.state.ScrollTop, min(te.state.Height-1, region.Bottom))
+	// Use actual buffer height instead of state height
+	screen := te.GetScreen()
+	bufferHeight := len(screen.Buffer)
+	if bufferHeight == 0 {
+		return
+	}
+
+	maxHeight := bufferHeight - 1
+	te.state.ScrollTop = max(0, min(maxHeight, region.Top))
+	te.state.ScrollBottom = max(te.state.ScrollTop, min(maxHeight, region.Bottom))
 }
 
 // clearFromCursor clears from cursor to end of screen
@@ -2000,15 +2220,18 @@ func (te *TerminalEmulator) clearFromCursor() {
 
 	// Clear from cursor to end of current line
 	for x := te.state.CursorX; x < te.state.Width; x++ {
-		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+		screen.MarkDirty(x, te.state.CursorY)
 	}
 
 	// Clear all lines below current line
 	for y := te.state.CursorY + 1; y < te.state.Height; y++ {
 		for x := 0; x < te.state.Width; x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	}
+	screen.Dirty = true
 }
 
 // clearToCursor clears from beginning of screen to cursor
@@ -2018,14 +2241,17 @@ func (te *TerminalEmulator) clearToCursor() {
 	// Clear all lines above current line
 	for y := 0; y < te.state.CursorY; y++ {
 		for x := 0; x < te.state.Width; x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	}
 
 	// Clear from beginning of current line to cursor
 	for x := 0; x <= te.state.CursorX; x++ {
-		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+		screen.Buffer[te.state.CursorY][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+		screen.MarkDirty(x, te.state.CursorY)
 	}
+	screen.Dirty = true
 }
 
 // clearEntireScreen clears the entire screen
@@ -2034,13 +2260,15 @@ func (te *TerminalEmulator) clearEntireScreen() {
 
 	for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
 		for x := 0; x < te.state.Width && x < len(screen.Buffer[y]); x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes()}
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+			screen.MarkDirty(x, y)
 		}
 	}
 
 	// Also reset scroll region when clearing entire screen
 	te.state.ScrollTop = 0
 	te.state.ScrollBottom = te.state.Height - 1
+	screen.Dirty = true
 }
 
 // Resize resizes the terminal
@@ -2078,8 +2306,13 @@ func (te *TerminalEmulator) Resize(width, height int) error {
 	te.state.CursorX = min(te.state.CursorX, width-1)
 	te.state.CursorY = min(te.state.CursorY, height-1)
 
-	// Adjust scroll region
-	te.state.ScrollBottom = height - 1
+	// Adjust scroll region based on actual buffer size
+	bufferHeight := len(te.screen.Buffer)
+	if bufferHeight > 0 {
+		te.state.ScrollBottom = min(height-1, bufferHeight-1)
+	} else {
+		te.state.ScrollBottom = height - 1
+	}
 	te.state.ScrollTop = 0
 
 	// Rebuild tab stops for new width
@@ -2115,11 +2348,15 @@ func (te *TerminalEmulator) EnableMouse(enable bool) error {
 
 // GetState returns the current terminal state
 func (te *TerminalEmulator) GetState() TerminalState {
+	te.mu.RLock()
+	defer te.mu.RUnlock()
 	return te.state
 }
 
 // GetScreen returns the terminal screen buffer
 func (te *TerminalEmulator) GetScreen() *Screen {
+	// Note: No lock here since it's called internally by methods that already hold the lock
+	// External callers should be aware that the returned screen can be modified
 	if te.useAltScreen {
 		return te.altScreen
 	}

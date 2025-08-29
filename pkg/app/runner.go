@@ -34,6 +34,7 @@ func NewRunner(serialConfig serial.SerialConfig) (*Runner, error) {
 
 // Run starts the application and blocks until it's stopped
 func (r *Runner) Run() error {
+
 	// Create application
 	app, err := NewApplication(r.config)
 	if err != nil {

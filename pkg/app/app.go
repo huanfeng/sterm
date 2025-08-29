@@ -39,10 +39,12 @@ type Application struct {
 	session *Session
 
 	// Control
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	mu           sync.RWMutex
+	updateNotify chan struct{} // Channel to notify UI updates
+	pauseChan    chan bool     // Channel to control pause state
 
 	// State
 	isRunning     bool
@@ -51,6 +53,12 @@ type Application struct {
 	lineWrap      bool      // Whether to wrap long lines
 	statusMessage string    // Temporary status message
 	statusTime    time.Time // When status message was set
+
+	// Cached status bar strings
+	cachedStatusLeft  string
+	cachedStatusRight string
+	cachedBytesRecv   int64
+	cachedBytesSent   int64
 
 	// Configuration
 	config AppConfig
@@ -209,15 +217,17 @@ func NewApplication(config AppConfig) (*Application, error) {
 
 	// Create components
 	app := &Application{
-		config:    config,
-		ctx:       ctx,
-		cancel:    cancel,
-		isRunning: false,
-		isPaused:  false,
-		localEcho: false, // Local echo off by default
-		lineWrap:  true,  // Line wrap on by default
-		debugLog:  debugLog,
-		debugMode: config.DebugMode,
+		config:       config,
+		ctx:          ctx,
+		cancel:       cancel,
+		updateNotify: make(chan struct{}, 100), // Buffered channel for updates
+		pauseChan:    make(chan bool, 1),       // Channel for pause control
+		isRunning:    false,
+		isPaused:     false,
+		localEcho:    false, // Local echo off by default
+		lineWrap:     true,  // Line wrap on by default
+		debugLog:     debugLog,
+		debugMode:    config.DebugMode,
 	}
 
 	// Initialize components
@@ -526,22 +536,49 @@ func (app *Application) Stop() error {
 func (app *Application) handleSerialInput() {
 	defer app.wg.Done()
 
-	buffer := make([]byte, 4096)
+	// Use larger buffer for better performance with high-speed data
+	buffer := make([]byte, 65536) // 64KB buffer
 
 	for {
 		select {
 		case <-app.ctx.Done():
 			return
+		case isPaused := <-app.pauseChan:
+			// Handle pause state change
+			if isPaused {
+				// Wait for resume signal
+				for {
+					select {
+					case <-app.ctx.Done():
+						return
+					case resumed := <-app.pauseChan:
+						if !resumed {
+							break
+						}
+					}
+					// Break inner loop when resumed
+					if !app.isPaused {
+						break
+					}
+				}
+			}
 		default:
+			// Check if paused without blocking
 			if app.isPaused {
-				time.Sleep(100 * time.Millisecond)
-				continue
+				// Wait a bit before checking again
+				select {
+				case <-app.ctx.Done():
+					return
+				case <-time.After(10 * time.Millisecond):
+					continue
+				}
 			}
 
-			// Read from serial port
+			// Read from serial port with timeout
+			app.serialPort.SetReadTimeout(100 * time.Millisecond)
 			n, err := app.serialPort.Read(buffer)
 			if err != nil {
-				// Log error but continue
+				// Timeout or error, continue
 				continue
 			}
 
@@ -560,6 +597,9 @@ func (app *Application) handleSerialInput() {
 				if app.session != nil {
 					app.session.UpdateStats(0, int64(n))
 				}
+
+				// Request UI update
+				app.requestUIUpdate()
 			}
 		}
 	}
@@ -1039,21 +1079,72 @@ func (app *Application) handleResize() {
 func (app *Application) updateUI() {
 	defer app.wg.Done()
 
-	ticker := time.NewTicker(50 * time.Millisecond) // 20 FPS
+	// Create a ticker for minimum refresh interval (to handle rapid updates)
+	ticker := time.NewTicker(16 * time.Millisecond) // ~60 FPS max
 	defer ticker.Stop()
+
+	lastUpdate := time.Now()
+	pendingUpdate := false
+	updateCount := 0
+	rateLimitWarning := false
 
 	for {
 		select {
 		case <-app.ctx.Done():
 			return
+		case <-app.updateNotify:
+			// Mark that we have a pending update
+			pendingUpdate = true
+			// Drain extra notifications to prevent channel overflow
+			for len(app.updateNotify) > 50 {
+				<-app.updateNotify
+				if !rateLimitWarning {
+					app.logDebug("WARNING: UI update rate limit - dropping updates")
+					rateLimitWarning = true
+				}
+			}
 		case <-ticker.C:
-			app.updateDisplay()
+			// Only update if we have pending changes and enough time has passed
+			if pendingUpdate && time.Since(lastUpdate) >= 16*time.Millisecond {
+				updateCount++
+				// Safety check - if we're updating too frequently, skip some frames
+				if updateCount > 100 && time.Since(lastUpdate) < time.Second {
+					app.logDebug("Skipping frame due to high update rate: %d updates/sec", updateCount)
+					continue
+				}
+				if updateCount > 100 {
+					updateCount = 0
+				}
+
+				app.updateDisplay()
+				lastUpdate = time.Now()
+				pendingUpdate = false
+				rateLimitWarning = false
+			}
 		}
+	}
+}
+
+// requestUIUpdate requests a UI update
+func (app *Application) requestUIUpdate() {
+	select {
+	case app.updateNotify <- struct{}{}:
+		// Notification sent
+	default:
+		// Channel full, update already pending
 	}
 }
 
 // updateDisplay updates the screen with terminal content
 func (app *Application) updateDisplay() {
+	// Add panic recovery for display updates
+	defer func() {
+		if r := recover(); r != nil {
+			app.logDebug("PANIC in updateDisplay: %v", r)
+			fmt.Printf("Display update error: %v\n", r)
+		}
+	}()
+
 	app.mu.RLock()
 	defer app.mu.RUnlock()
 
@@ -1074,9 +1165,6 @@ func (app *Application) updateDisplay() {
 		return
 	}
 
-	// Clear tcell screen
-	app.screen.Clear()
-
 	// Get terminal state
 	state := app.terminal.GetState()
 
@@ -1084,46 +1172,50 @@ func (app *Application) updateDisplay() {
 	var buffer [][]terminal.Cell
 	if app.terminal.IsScrolling() {
 		buffer = app.terminal.GetScrollbackView()
+		// In scroll mode, redraw everything
+		app.screen.Clear()
 	} else {
 		buffer = screen.Buffer
 	}
 
-	// Render each cell (leave room for status bar at bottom)
+	// Render cells (leave room for status bar at bottom)
 	screenWidth, screenHeight := app.screen.Size()
 	contentHeight := screenHeight - 1 // Reserve bottom line for status bar
 
-	for y := 0; y < contentHeight && y < len(buffer); y++ {
-		for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
-			cell := buffer[y][x]
-
-			// Convert terminal colors to tcell colors
-			style := tcell.StyleDefault
-
-			// Set foreground color
-			style = style.Foreground(convertColor(cell.Attributes.Foreground))
-
-			// Set background color
-			style = style.Background(convertColor(cell.Attributes.Background))
-
-			// Apply attributes
-			if cell.Attributes.Bold {
-				style = style.Bold(true)
+	if app.terminal.IsScrolling() || needsRedraw {
+		// Full redraw for scroll mode or when needed
+		app.screen.Clear()
+		for y := 0; y < contentHeight && y < len(buffer); y++ {
+			for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+				cell := buffer[y][x]
+				app.renderCell(x, y, cell)
 			}
-			if cell.Attributes.Italic {
-				style = style.Italic(true)
+		}
+	} else {
+		// Optimized: only redraw dirty cells
+		// Check if we have any dirty regions
+		if screen.DirtyMinY <= screen.DirtyMaxY {
+			// Ensure bounds are within screen limits
+			startY := screen.DirtyMinY
+			if startY < 0 {
+				startY = 0
 			}
-			if cell.Attributes.Underline {
-				style = style.Underline(true)
-			}
-			if cell.Attributes.Reverse {
-				style = style.Reverse(true)
-			}
-			if cell.Attributes.Blink {
-				style = style.Blink(true)
+			endY := screen.DirtyMaxY
+			if endY >= contentHeight {
+				endY = contentHeight - 1
 			}
 
-			// Set the cell
-			app.screen.SetContent(x, y, cell.Char, nil, style)
+			for y := startY; y <= endY && y < len(buffer); y++ {
+				if !screen.IsLineDirty(y) {
+					continue
+				}
+				for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+					cell := buffer[y][x]
+					if cell.Dirty {
+						app.renderCell(x, y, cell)
+					}
+				}
+			}
 		}
 	}
 
@@ -1133,13 +1225,16 @@ func (app *Application) updateDisplay() {
 	// Prepare status bar content
 	var statusLeft, statusCenter, statusRight string
 
-	// Left: Connection info
-	if app.serialPort != nil && app.serialPort.IsOpen() {
-		cfg := app.config.SerialConfig
-		statusLeft = fmt.Sprintf(" %s %d ", cfg.Port, cfg.BaudRate)
-	} else {
-		statusLeft = " Disconnected "
+	// Left: Connection info (cache if unchanged)
+	if app.cachedStatusLeft == "" || needsRedraw {
+		if app.serialPort != nil && app.serialPort.IsOpen() {
+			cfg := app.config.SerialConfig
+			app.cachedStatusLeft = fmt.Sprintf(" %s %d ", cfg.Port, cfg.BaudRate)
+		} else {
+			app.cachedStatusLeft = " Disconnected "
+		}
 	}
+	statusLeft = app.cachedStatusLeft
 
 	// Center: Mode indicator or temporary status message
 	if app.statusMessage != "" && time.Since(app.statusTime) < 3*time.Second {
@@ -1155,11 +1250,16 @@ func (app *Application) updateDisplay() {
 		statusCenter = " [Shift+PgUp/↑: Scroll] [F1: Menu] [F8: Pause] "
 	}
 
-	// Right: Session info
+	// Right: Session info (cache and update only when changed)
 	if app.session != nil {
-		statusRight = fmt.Sprintf(" TX:%d RX:%d ",
-			app.session.BytesSent,
-			app.session.BytesRecv)
+		currentSent := app.session.BytesSent
+		currentRecv := app.session.BytesRecv
+		if currentSent != app.cachedBytesSent || currentRecv != app.cachedBytesRecv || needsRedraw {
+			app.cachedBytesSent = currentSent
+			app.cachedBytesRecv = currentRecv
+			app.cachedStatusRight = fmt.Sprintf(" TX:%d RX:%d ", currentSent, currentRecv)
+		}
+		statusRight = app.cachedStatusRight
 	}
 
 	// Draw status bar with different style
@@ -1253,8 +1353,8 @@ func (app *Application) updateDisplay() {
 		app.mainMenu.Draw()
 	}
 
-	// Mark screen as clean
-	screen.Dirty = false
+	// Clear dirty flags
+	screen.ClearDirty()
 }
 
 // Pause pauses data flow
@@ -1266,13 +1366,22 @@ func (app *Application) Pause() error {
 		return fmt.Errorf("application is not running")
 	}
 
-	app.isPaused = true
-	// Mark screen as dirty to force redraw
-	if app.terminal != nil {
-		screen := app.terminal.GetScreen()
-		if screen != nil {
-			screen.Dirty = true
+	if !app.isPaused {
+		app.isPaused = true
+		// Notify pause through channel
+		select {
+		case app.pauseChan <- true:
+		default:
 		}
+		// Mark screen as dirty to force redraw
+		if app.terminal != nil {
+			screen := app.terminal.GetScreen()
+			if screen != nil {
+				screen.Dirty = true
+			}
+		}
+		// Request UI update to show paused state
+		app.requestUIUpdate()
 	}
 	return nil
 }
@@ -1286,13 +1395,22 @@ func (app *Application) Resume() error {
 		return fmt.Errorf("application is not running")
 	}
 
-	app.isPaused = false
-	// Mark screen as dirty to force redraw
-	if app.terminal != nil {
-		screen := app.terminal.GetScreen()
-		if screen != nil {
-			screen.Dirty = true
+	if app.isPaused {
+		app.isPaused = false
+		// Notify resume through channel
+		select {
+		case app.pauseChan <- false:
+		default:
 		}
+		// Mark screen as dirty to force redraw
+		if app.terminal != nil {
+			screen := app.terminal.GetScreen()
+			if screen != nil {
+				screen.Dirty = true
+			}
+		}
+		// Request UI update to show resumed state
+		app.requestUIUpdate()
 	}
 	return nil
 }
@@ -1384,6 +1502,45 @@ func (app *Application) IsPaused() bool {
 	defer app.mu.RUnlock()
 
 	return app.isPaused
+}
+
+// renderCell renders a single cell to the screen
+func (app *Application) renderCell(x, y int, cell terminal.Cell) {
+	// Bounds check
+	width, height := app.screen.Size()
+	if x < 0 || x >= width || y < 0 || y >= height {
+		app.logDebug("renderCell out of bounds: x=%d, y=%d, screen=%dx%d", x, y, width, height)
+		return
+	}
+
+	// Convert terminal colors to tcell colors
+	style := tcell.StyleDefault
+
+	// Set foreground color
+	style = style.Foreground(convertColor(cell.Attributes.Foreground))
+
+	// Set background color
+	style = style.Background(convertColor(cell.Attributes.Background))
+
+	// Apply attributes
+	if cell.Attributes.Bold {
+		style = style.Bold(true)
+	}
+	if cell.Attributes.Italic {
+		style = style.Italic(true)
+	}
+	if cell.Attributes.Underline {
+		style = style.Underline(true)
+	}
+	if cell.Attributes.Reverse {
+		style = style.Reverse(true)
+	}
+	if cell.Attributes.Blink {
+		style = style.Blink(true)
+	}
+
+	// Set the cell
+	app.screen.SetContent(x, y, cell.Char, nil, style)
 }
 
 // convertColor converts terminal color to tcell color
