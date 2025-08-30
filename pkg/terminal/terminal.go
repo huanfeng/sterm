@@ -263,6 +263,9 @@ type Screen struct {
 	DirtyMinY  int          // Minimum dirty Y coordinate
 	DirtyMaxY  int          // Maximum dirty Y coordinate
 
+	// Special flags
+	JustCleared bool // Flag to indicate screen was just cleared
+
 	// Mutex for thread safety
 	mutex sync.RWMutex
 }
@@ -357,6 +360,55 @@ func (s *Screen) MarkDirty(x, y int) {
 	}
 }
 
+// MarkLineDirty marks an entire line as dirty
+func (s *Screen) MarkLineDirty(y int) {
+	// Bounds check
+	if y < 0 || y >= s.Height || y >= len(s.Buffer) {
+		return
+	}
+
+	// Lock for concurrent access
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.Dirty = true
+
+	// Initialize map if nil
+	if s.DirtyLines == nil {
+		s.DirtyLines = make(map[int]bool)
+	}
+
+	s.DirtyLines[y] = true
+
+	// Mark all cells in this line as dirty
+	for x := 0; x < s.Width && x < len(s.Buffer[y]); x++ {
+		s.Buffer[y][x].Dirty = true
+	}
+
+	// Update dirty bounds to include entire line
+	if len(s.DirtyLines) == 1 {
+		// First dirty line, initialize bounds
+		s.DirtyMinX = 0
+		s.DirtyMaxX = s.Width - 1
+		s.DirtyMinY = y
+		s.DirtyMaxY = y
+	} else {
+		// Expand bounds to include full line width
+		if 0 < s.DirtyMinX {
+			s.DirtyMinX = 0
+		}
+		if s.Width-1 > s.DirtyMaxX {
+			s.DirtyMaxX = s.Width - 1
+		}
+		if y < s.DirtyMinY {
+			s.DirtyMinY = y
+		}
+		if y > s.DirtyMaxY {
+			s.DirtyMaxY = y
+		}
+	}
+}
+
 // ClearDirty clears all dirty flags
 func (s *Screen) ClearDirty() {
 	s.mutex.Lock()
@@ -369,6 +421,9 @@ func (s *Screen) ClearDirty() {
 	s.DirtyMaxX = -1
 	s.DirtyMinY = s.Height
 	s.DirtyMaxY = -1
+
+	// Note: We intentionally do NOT clear JustCleared flag here
+	// It needs to be handled by the display update
 
 	for y := range s.Buffer {
 		for x := range s.Buffer[y] {
@@ -386,6 +441,20 @@ func (s *Screen) IsLineDirty(y int) bool {
 		return false
 	}
 	return s.DirtyLines[y]
+}
+
+// IsJustCleared checks if the screen was just cleared (thread-safe)
+func (s *Screen) IsJustCleared() bool {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.JustCleared
+}
+
+// ClearJustClearedFlag clears the JustCleared flag (thread-safe)
+func (s *Screen) ClearJustClearedFlag() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.JustCleared = false
 }
 
 // GetDirtyBounds returns the dirty region bounds (thread-safe)
@@ -1714,6 +1783,11 @@ func (te *TerminalEmulator) Clear() {
 
 // clearScreen clears the screen
 func (te *TerminalEmulator) clearScreen(mode int) {
+	// Exit scroll mode for any clear operation
+	if te.isScrolling {
+		te.ExitScrollMode()
+	}
+
 	switch mode {
 	case 0: // Clear from cursor to end of screen
 		te.clearFromCursor()
@@ -1721,11 +1795,42 @@ func (te *TerminalEmulator) clearScreen(mode int) {
 		te.clearToCursor()
 	case 2: // Clear entire screen
 		te.clearEntireScreen()
-		// Reset cursor to home position when clearing entire screen
+		// Always reset cursor to home position when clearing entire screen
+		// This must be done AFTER clearEntireScreen
 		te.state.CursorX = 0
 		te.state.CursorY = 0
+
+		// Log cursor position after reset
+		if te.logger != nil {
+			te.logger.Debugf("[clearScreen] Mode 2 - Cursor reset to (0,0) from (%d,%d)",
+				te.state.CursorX, te.state.CursorY)
+		}
 	}
-	te.GetScreen().Dirty = true
+
+	// Force entire screen to be redrawn
+	screen := te.GetScreen()
+	screen.Dirty = true
+
+	// Mark all lines as dirty when clearing
+	screen.mutex.Lock()
+	for y := 0; y < screen.Height; y++ {
+		if screen.DirtyLines == nil {
+			screen.DirtyLines = make(map[int]bool)
+		}
+		screen.DirtyLines[y] = true
+		// Also mark all cells in the line as dirty for clear operations
+		if y < len(screen.Buffer) {
+			for x := 0; x < len(screen.Buffer[y]); x++ {
+				screen.Buffer[y][x].Dirty = true
+			}
+		}
+	}
+	// Set dirty bounds to cover entire screen
+	screen.DirtyMinY = 0
+	screen.DirtyMaxY = screen.Height - 1
+	screen.DirtyMinX = 0
+	screen.DirtyMaxX = screen.Width - 1
+	screen.mutex.Unlock()
 }
 
 // clearLine clears the current line
@@ -1828,12 +1933,7 @@ func (te *TerminalEmulator) scrollUp() {
 		if y+1 < len(screen.Buffer) {
 			copy(screen.Buffer[y], screen.Buffer[y+1])
 			// Mark entire line as dirty after copying
-			// Use actual buffer width, not state width
-			lineWidth := len(screen.Buffer[y])
-			for x := 0; x < lineWidth; x++ {
-				screen.Buffer[y][x].Dirty = true
-				screen.MarkDirty(x, y)
-			}
+			screen.MarkLineDirty(y)
 		}
 	}
 
@@ -1842,9 +1942,13 @@ func (te *TerminalEmulator) scrollUp() {
 		line := screen.Buffer[te.state.ScrollBottom]
 		for x := 0; x < len(line); x++ {
 			line[x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
-			screen.MarkDirty(x, te.state.ScrollBottom)
 		}
+		// Mark the entire bottom line as dirty
+		screen.MarkLineDirty(te.state.ScrollBottom)
 	}
+
+	// Make sure screen is marked as dirty
+	screen.Dirty = true
 }
 
 // scrollDown scrolls the screen down by one line
@@ -2258,17 +2362,76 @@ func (te *TerminalEmulator) clearToCursor() {
 func (te *TerminalEmulator) clearEntireScreen() {
 	screen := te.GetScreen()
 
-	for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
-		for x := 0; x < te.state.Width && x < len(screen.Buffer[y]); x++ {
-			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
-			screen.MarkDirty(x, y)
+	// Debug logging
+	if te.logger != nil {
+		te.logger.Debugf("[clearEntireScreen] Start - isScrolling=%v, scrollbackLen=%d, scrollPos=%d",
+			te.isScrolling, len(te.scrollbackBuffer), te.scrollPosition)
+	}
+
+	// Exit scroll mode if active
+	if te.isScrolling {
+		te.ExitScrollMode()
+	}
+
+	// Save current screen to scrollback before clearing
+	// This preserves history like most terminal emulators
+	if len(screen.Buffer) > 0 {
+		for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
+			// Only save non-empty lines
+			hasContent := false
+			for x := 0; x < len(screen.Buffer[y]); x++ {
+				if screen.Buffer[y][x].Char != ' ' && screen.Buffer[y][x].Char != 0 {
+					hasContent = true
+					break
+				}
+			}
+			if hasContent {
+				lineCopy := make([]Cell, len(screen.Buffer[y]))
+				copy(lineCopy, screen.Buffer[y])
+				te.scrollbackBuffer = append(te.scrollbackBuffer, lineCopy)
+
+				// Trim scrollback if it exceeds maximum size
+				if len(te.scrollbackBuffer) > te.scrollbackSize {
+					te.scrollbackBuffer = te.scrollbackBuffer[1:]
+				}
+			}
 		}
 	}
 
-	// Also reset scroll region when clearing entire screen
+	// Clear all cells and mark them as dirty
+	for y := 0; y < te.state.Height && y < len(screen.Buffer); y++ {
+		for x := 0; x < te.state.Width && x < len(screen.Buffer[y]); x++ {
+			screen.Buffer[y][x] = Cell{Char: ' ', Attributes: DefaultTextAttributes(), Dirty: true}
+		}
+		// Mark entire line as dirty to ensure it gets redrawn
+		screen.MarkLineDirty(y)
+	}
+
+	// Reset scroll region when clearing entire screen
 	te.state.ScrollTop = 0
 	te.state.ScrollBottom = te.state.Height - 1
+
+	// IMPORTANT: Reset cursor position to home (0,0) when clearing entire screen
+	// This should be done here, not later
+	te.state.CursorX = 0
+	te.state.CursorY = 0
+
+	// Reset scroll position to view the current (now empty) screen
+	te.scrollPosition = len(te.scrollbackBuffer)
+	te.scrollOffset = 0
+
 	screen.Dirty = true
+
+	// Mark this as a clear screen operation for special handling
+	screen.mutex.Lock()
+	screen.JustCleared = true
+	screen.mutex.Unlock()
+
+	// Debug logging
+	if te.logger != nil {
+		te.logger.Debugf("[clearEntireScreen] End - scrollbackLen=%d, scrollPos=%d, cursor=(%d,%d), JustCleared=true",
+			len(te.scrollbackBuffer), te.scrollPosition, te.state.CursorX, te.state.CursorY)
+	}
 }
 
 // Resize resizes the terminal

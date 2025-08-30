@@ -539,6 +539,12 @@ func (app *Application) handleSerialInput() {
 	// Use larger buffer for better performance with high-speed data
 	buffer := make([]byte, 65536) // 64KB buffer
 
+	// Track last data receive time for flush detection
+	var lastDataTime time.Time
+	flushTimer := time.NewTimer(100 * time.Millisecond) // Increased to 100ms for better reliability
+	flushTimer.Stop()
+	needsFlush := false
+
 	for {
 		select {
 		case <-app.ctx.Done():
@@ -562,6 +568,12 @@ func (app *Application) handleSerialInput() {
 					}
 				}
 			}
+		case <-flushTimer.C:
+			// Force UI update after a period of no data
+			if needsFlush {
+				app.forceImmediateUIUpdate()
+				needsFlush = false
+			}
 		default:
 			// Check if paused without blocking
 			if app.isPaused {
@@ -578,7 +590,14 @@ func (app *Application) handleSerialInput() {
 			app.serialPort.SetReadTimeout(100 * time.Millisecond)
 			n, err := app.serialPort.Read(buffer)
 			if err != nil {
-				// Timeout or error, continue
+				// Timeout or error - check if we need to flush
+				if needsFlush && !lastDataTime.IsZero() && time.Since(lastDataTime) > 100*time.Millisecond {
+					// Force a final UI update if we haven't received data for 100ms
+					app.logDebug("Read timeout - forcing immediate UI update")
+					app.forceImmediateUIUpdate()
+					lastDataTime = time.Time{}
+					needsFlush = false
+				}
 				continue
 			}
 
@@ -586,7 +605,10 @@ func (app *Application) handleSerialInput() {
 				data := buffer[:n]
 
 				// Process in terminal
-				_ = app.terminal.ProcessOutput(data)
+				err := app.terminal.ProcessOutput(data)
+				if err != nil {
+					app.logDebug("ProcessOutput error: %v", err)
+				}
 
 				// Save to history
 				if app.historyMgr != nil {
@@ -600,6 +622,20 @@ func (app *Application) handleSerialInput() {
 
 				// Request UI update
 				app.requestUIUpdate()
+
+				// Track when we last received data
+				lastDataTime = time.Now()
+				needsFlush = true
+
+				// Reset flush timer - will fire if no more data arrives
+				if !flushTimer.Stop() {
+					// Drain the channel if timer already fired
+					select {
+					case <-flushTimer.C:
+					default:
+					}
+				}
+				flushTimer.Reset(100 * time.Millisecond)
 			}
 		}
 	}
@@ -675,12 +711,20 @@ func (app *Application) handleUserInput() {
 
 // handleKeyEvent handles keyboard events
 func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
-	// Debug log key events (commented out for performance)
-	// if ev.Key() == tcell.KeyRune {
-	// 	app.logDebug("Key: Rune='%c'(0x%x), Mods=%v", ev.Rune(), ev.Rune(), ev.Modifiers())
-	// } else {
-	// 	app.logDebug("Key: Key=%v, Mods=%v", ev.Key(), ev.Modifiers())
-	// }
+	// Debug log key events when debug mode is enabled
+	if app.debugMode {
+		if ev.Key() == tcell.KeyRune {
+			app.logDebug("Key: Rune='%c'(0x%x), Mods=%v", ev.Rune(), ev.Rune(), ev.Modifiers())
+		} else {
+			app.logDebug("Key: Key=%v, Mods=%v", ev.Key(), ev.Modifiers())
+		}
+
+		// Log terminal state when key is pressed
+		screen := app.terminal.GetScreen()
+		if screen != nil {
+			app.logDebug("Key press - Screen dirty: %v, DirtyLines: %d", screen.Dirty, len(screen.DirtyLines))
+		}
+	}
 
 	// Check if menu is visible and handle its input first
 	if app.mainMenu != nil && app.mainMenu.IsVisible() {
@@ -1087,6 +1131,7 @@ func (app *Application) updateUI() {
 	pendingUpdate := false
 	updateCount := 0
 	rateLimitWarning := false
+	lastPendingTime := time.Now()
 
 	for {
 		select {
@@ -1095,17 +1140,33 @@ func (app *Application) updateUI() {
 		case <-app.updateNotify:
 			// Mark that we have a pending update
 			pendingUpdate = true
+			lastPendingTime = time.Now()
+
+			// Log pending update
+			if len(app.updateNotify) > 10 {
+				app.logDebug("Update queue size: %d", len(app.updateNotify))
+			}
+
 			// Drain extra notifications to prevent channel overflow
 			for len(app.updateNotify) > 50 {
 				<-app.updateNotify
 				if !rateLimitWarning {
-					app.logDebug("WARNING: UI update rate limit - dropping updates")
+					app.logDebug("WARNING: UI update rate limit - dropping updates (queue size: %d)", len(app.updateNotify))
 					rateLimitWarning = true
 				}
 			}
 		case <-ticker.C:
-			// Only update if we have pending changes and enough time has passed
-			if pendingUpdate && time.Since(lastUpdate) >= 16*time.Millisecond {
+			// Force update if pending for too long (prevent data stuck in buffer)
+			if pendingUpdate && time.Since(lastPendingTime) > 20*time.Millisecond {
+				// Reduced from 30ms to 20ms for better responsiveness
+				app.logDebug("Force update - pending for %v", time.Since(lastPendingTime))
+				app.updateDisplay()
+				lastUpdate = time.Now()
+				pendingUpdate = false
+				rateLimitWarning = false
+				updateCount = 0
+			} else if pendingUpdate && time.Since(lastUpdate) >= 16*time.Millisecond {
+				// Normal update with rate limiting
 				updateCount++
 				// Safety check - if we're updating too frequently, skip some frames
 				if updateCount > 100 && time.Since(lastUpdate) < time.Second {
@@ -1120,6 +1181,12 @@ func (app *Application) updateUI() {
 				lastUpdate = time.Now()
 				pendingUpdate = false
 				rateLimitWarning = false
+			} else if pendingUpdate {
+				// Log if update is pending but not executed
+				if app.debugMode && time.Since(lastPendingTime) > 100*time.Millisecond {
+					app.logDebug("Update pending but not executed - waiting %v, last update %v ago",
+						time.Since(lastPendingTime), time.Since(lastUpdate))
+				}
 			}
 		}
 	}
@@ -1133,6 +1200,54 @@ func (app *Application) requestUIUpdate() {
 	default:
 		// Channel full, update already pending
 	}
+}
+
+// forceImmediateUIUpdate forces an immediate UI update, bypassing the rate limiter
+func (app *Application) forceImmediateUIUpdate() {
+	// Get the screen to check if there's any unrendered content
+	screen := app.terminal.GetScreen()
+	state := app.terminal.GetState()
+	if screen != nil {
+		// If dirty bounds are invalid, we need to determine what to redraw
+		if screen.DirtyMinY > screen.DirtyMaxY || len(screen.DirtyLines) == 0 {
+			// Use cursor position as a hint - if cursor is not at start, there's likely content
+			if state.CursorY > 0 || state.CursorX > 0 {
+				// Mark from line 0 to cursor line as dirty to ensure all content is rendered
+				endLine := state.CursorY
+				if endLine >= screen.Height {
+					endLine = screen.Height - 1
+				}
+
+				for y := 0; y <= endLine && y < len(screen.Buffer); y++ {
+					screen.MarkLineDirty(y)
+				}
+			} else {
+				// Even if cursor is at 0,0, mark entire screen to be safe
+				for y := 0; y < screen.Height && y < len(screen.Buffer); y++ {
+					screen.MarkLineDirty(y)
+				}
+			}
+		}
+
+		// Always mark screen as dirty to force a render pass
+		screen.Dirty = true
+	}
+
+	app.updateDisplay()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // updateDisplay updates the screen with terminal content
@@ -1161,7 +1276,14 @@ func (app *Application) updateDisplay() {
 
 	// Get terminal screen buffer
 	screen := app.terminal.GetScreen()
-	if screen == nil || (!screen.Dirty && !needsRedraw) {
+	if screen == nil {
+		return
+	}
+
+	// Check if screen was just cleared
+	justCleared := screen.IsJustCleared()
+
+	if !screen.Dirty && !needsRedraw && !justCleared {
 		return
 	}
 
@@ -1182,7 +1304,22 @@ func (app *Application) updateDisplay() {
 	screenWidth, screenHeight := app.screen.Size()
 	contentHeight := screenHeight - 1 // Reserve bottom line for status bar
 
-	if app.terminal.IsScrolling() || needsRedraw {
+	// Handle just cleared screen
+	if justCleared {
+		app.screen.Clear()
+		// Clear the flag
+		screen.ClearJustClearedFlag()
+		// Force full redraw of current buffer to show any content (including prompt)
+		for y := 0; y < contentHeight && y < len(buffer); y++ {
+			for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+				cell := buffer[y][x]
+				app.renderCell(x, y, cell)
+			}
+		}
+		// Clear dirty flags after full redraw
+		screen.ClearDirty()
+		// Continue to render status bar
+	} else if app.terminal.IsScrolling() || needsRedraw {
 		// Full redraw for scroll mode or when needed
 		app.screen.Clear()
 		for y := 0; y < contentHeight && y < len(buffer); y++ {
@@ -1192,27 +1329,80 @@ func (app *Application) updateDisplay() {
 			}
 		}
 	} else {
-		// Optimized: only redraw dirty cells
-		// Check if we have any dirty regions
-		if screen.DirtyMinY <= screen.DirtyMaxY {
-			// Ensure bounds are within screen limits
-			startY := screen.DirtyMinY
-			if startY < 0 {
-				startY = 0
-			}
-			endY := screen.DirtyMaxY
-			if endY >= contentHeight {
-				endY = contentHeight - 1
+		// Check if this is a full screen clear (all lines dirty and all spaces)
+		isFullClear := false
+		if screen.DirtyMinY == 0 && screen.DirtyMaxY >= screen.Height-1 {
+			isFullClear = true
+			nonSpaceCount := 0
+			for y := 0; y < screen.Height && y < len(buffer); y++ {
+				for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+					if buffer[y][x].Char != ' ' && buffer[y][x].Char != 0 {
+						nonSpaceCount++
+					}
+				}
 			}
 
-			for y := startY; y <= endY && y < len(buffer); y++ {
-				if !screen.IsLineDirty(y) {
-					continue
+			// If all or mostly spaces (allow for prompt), consider it a clear
+			totalCells := screen.Height * screen.Width
+			if nonSpaceCount == 0 || (float64(nonSpaceCount)/float64(totalCells) < 0.01) {
+				isFullClear = true
+			} else {
+				isFullClear = false
+			}
+		}
+
+		if isFullClear {
+			// Full screen clear detected - clear entire display
+			app.screen.Clear()
+			// Redraw empty screen
+			for y := 0; y < contentHeight; y++ {
+				for x := 0; x < screenWidth; x++ {
+					app.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
 				}
-				for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
-					cell := buffer[y][x]
-					if cell.Dirty {
-						app.renderCell(x, y, cell)
+			}
+			// Force immediate screen update
+			app.screen.Show()
+		} else {
+			// Optimized: only redraw dirty cells
+			// Check if we have any dirty regions
+			if screen.DirtyMinY <= screen.DirtyMaxY {
+				// Ensure bounds are within screen limits
+				startY := screen.DirtyMinY
+				if startY < 0 {
+					startY = 0
+				}
+				endY := screen.DirtyMaxY
+				if endY >= contentHeight {
+					endY = contentHeight - 1
+				}
+
+				for y := startY; y <= endY && y < len(buffer); y++ {
+					if !screen.IsLineDirty(y) {
+						continue
+					}
+
+					// Check if this is a clear operation (entire line is spaces with dirty flag)
+					allSpaces := true
+					for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+						if buffer[y][x].Char != ' ' || !buffer[y][x].Dirty {
+							allSpaces = false
+							break
+						}
+					}
+
+					if allSpaces {
+						// Clear the entire line for proper clearing
+						for x := 0; x < screenWidth; x++ {
+							app.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+						}
+					} else {
+						// Normal rendering of dirty cells
+						for x := 0; x < screen.Width && x < len(buffer[y]); x++ {
+							cell := buffer[y][x]
+							if cell.Dirty {
+								app.renderCell(x, y, cell)
+							}
+						}
 					}
 				}
 			}
@@ -1434,9 +1624,95 @@ func (app *Application) ClearScreen() error {
 		return fmt.Errorf("terminal not initialized")
 	}
 
+	// Lock to ensure thread safety
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	app.logDebug("=== ClearScreen Start ===")
+
+	// Exit scroll mode if active
+	if app.terminal.IsScrolling() {
+		app.logDebug("Exiting scroll mode")
+		app.terminal.ExitScrollMode()
+	}
+
+	// Log terminal state before clear
+	termState := app.terminal.GetState()
+	app.logDebug("Before clear - Cursor: (%d, %d), Screen: %dx%d",
+		termState.CursorX, termState.CursorY, termState.Width, termState.Height)
+
 	// Send clear screen sequence
 	clearSeq := []byte{0x1B, '[', '2', 'J', 0x1B, '[', 'H'}
-	return app.terminal.ProcessOutput(clearSeq)
+	err := app.terminal.ProcessOutput(clearSeq)
+
+	if err != nil {
+		app.logDebug("ProcessOutput error: %v", err)
+	}
+
+	// Log terminal state after clear
+	termStateAfter := app.terminal.GetState()
+	app.logDebug("After clear - Cursor: (%d, %d)", termStateAfter.CursorX, termStateAfter.CursorY)
+
+	// Force complete screen redraw
+	if app.screen != nil {
+		// Clear the physical screen
+		app.screen.Clear()
+
+		// Get the cleared terminal buffer
+		screen := app.terminal.GetScreen()
+		if screen != nil {
+			app.logDebug("Screen buffer - Dirty: %v, DirtyLines count: %d, Bounds: Y(%d-%d) X(%d-%d)",
+				screen.Dirty, len(screen.DirtyLines),
+				screen.DirtyMinY, screen.DirtyMaxY, screen.DirtyMinX, screen.DirtyMaxX)
+
+			// Check first few lines of buffer content
+			for y := 0; y < 3 && y < len(screen.Buffer); y++ {
+				lineEmpty := true
+				for x := 0; x < len(screen.Buffer[y]) && x < 10; x++ {
+					if screen.Buffer[y][x].Char != ' ' && screen.Buffer[y][x].Char != 0 {
+						lineEmpty = false
+						break
+					}
+				}
+				app.logDebug("Line %d empty: %v", y, lineEmpty)
+			}
+
+			// Ensure screen bounds are correct
+			screenWidth, screenHeight := app.screen.Size()
+			contentHeight := screenHeight - 1 // Reserve bottom line for status bar
+
+			app.logDebug("Clearing screen area: %dx%d (content height: %d)", screenWidth, screenHeight, contentHeight)
+
+			// Redraw the cleared terminal buffer (should be all spaces)
+			for y := 0; y < contentHeight && y < screen.Height && y < len(screen.Buffer); y++ {
+				for x := 0; x < screenWidth && x < screen.Width && x < len(screen.Buffer[y]); x++ {
+					// Force render spaces to clear any residual content
+					app.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+				}
+			}
+
+			// Clear any remaining lines
+			for y := screen.Height; y < contentHeight; y++ {
+				for x := 0; x < screenWidth; x++ {
+					app.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
+				}
+			}
+		} else {
+			app.logDebug("ERROR: screen is nil after GetScreen()")
+		}
+
+		// Show changes immediately
+		app.screen.Show()
+	} else {
+		app.logDebug("ERROR: app.screen is nil")
+	}
+
+	// Force immediate UI update
+	app.requestUIUpdate()
+
+	app.logDebug("=== ClearScreen End ===")
+
+	return err
 }
 
 // Disconnect disconnects from the serial port
