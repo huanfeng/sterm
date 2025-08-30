@@ -51,17 +51,8 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("failed to start application: %w", err)
 	}
 
-	// Print session info
-	fmt.Printf("\n=== Serial Terminal Session Started ===\n")
-	fmt.Printf("Port: %s\n", r.config.SerialConfig.Port)
-	fmt.Printf("Settings: %d %d-%s-%d\n",
-		r.config.SerialConfig.BaudRate,
-		r.config.SerialConfig.DataBits,
-		string(r.config.SerialConfig.Parity[0]),
-		r.config.SerialConfig.StopBits)
-	fmt.Printf("Press Ctrl+Shift+Q (or Ctrl+Q) to exit\n")
-	fmt.Printf("Press F1 for help\n")
-	fmt.Printf("=====================================\n\n")
+	// Don't print session info after screen initialization
+	// This information is already shown in the status bar and help menu
 
 	// Wait for signal or application to stop
 	select {
