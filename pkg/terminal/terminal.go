@@ -2030,17 +2030,28 @@ func (te *TerminalEmulator) ScrollDown(n int) {
 		return
 	}
 
+	// Calculate the maximum valid position (at the bottom of current view)
+	maxPosition := len(te.scrollbackBuffer)
+
 	// Move position down (forward towards newer data)
 	te.scrollPosition += n
-	currentEnd := len(te.scrollbackBuffer) + te.GetScreen().Height
-	if te.scrollPosition > currentEnd {
-		te.scrollPosition = currentEnd
+
+	// Ensure position doesn't go beyond the maximum valid position
+	if te.scrollPosition > maxPosition {
+		te.scrollPosition = maxPosition
 	}
+
 	// Update offset based on new position
 	te.scrollOffset = len(te.scrollbackBuffer) - te.scrollPosition
+
+	// Ensure offset never goes negative
 	if te.scrollOffset < 0 {
 		te.scrollOffset = 0
+		// If offset would be negative, we're at the bottom
+		// Adjust position to be exactly at the bottom
+		te.scrollPosition = len(te.scrollbackBuffer)
 	}
+
 	te.GetScreen().Dirty = true
 }
 
@@ -2059,8 +2070,8 @@ func (te *TerminalEmulator) ScrollToBottom() {
 	if !te.isScrolling {
 		te.EnterScrollMode()
 	}
-	currentEnd := len(te.scrollbackBuffer) + te.GetScreen().Height
-	te.scrollPosition = currentEnd
+	// Set position to the end of scrollback buffer (shows current screen)
+	te.scrollPosition = len(te.scrollbackBuffer)
 	te.scrollOffset = 0
 	te.GetScreen().Dirty = true
 }
