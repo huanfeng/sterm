@@ -1116,6 +1116,7 @@ func (vt *VTParser) handleSetMode(set bool) []Action {
 			case 1049: // Alternative screen buffer + save/restore cursor
 				if set {
 					// Save cursor, switch to alt screen, clear it
+					// Note: saveCursor and restoreCursor are handled as separate actions
 					return []Action{
 						{Type: ActionSaveCursor},
 						{Type: ActionSwitchAltScreen, Data: true},
@@ -1123,6 +1124,7 @@ func (vt *VTParser) handleSetMode(set bool) []Action {
 					}
 				} else {
 					// Switch back to normal screen, restore cursor
+					// The order is important: switch first, then restore cursor
 					return []Action{
 						{Type: ActionSwitchAltScreen, Data: false},
 						{Type: ActionRestoreCursor},
@@ -2649,19 +2651,63 @@ func (te *TerminalEmulator) clearTabStop(mode int) {
 func (te *TerminalEmulator) switchAltScreen(useAlt bool) {
 	if useAlt && !te.useAltScreen {
 		// Switch to alternative screen
+
+		// Debug logging
+		if te.logger != nil {
+			te.logger.Debugf("[switchAltScreen] Switching to alternate screen")
+		}
+
+		// Clear alternative screen first for fresh start
+		altScreen := te.altScreen
+		for y := 0; y < altScreen.Height && y < len(altScreen.Buffer); y++ {
+			for x := 0; x < altScreen.Width && x < len(altScreen.Buffer[y]); x++ {
+				altScreen.Buffer[y][x] = Cell{
+					Char:       ' ',
+					Attributes: DefaultTextAttributes(),
+					Dirty:      true,
+				}
+			}
+		}
+		altScreen.Dirty = true
+
+		// Now switch to alt screen
 		te.useAltScreen = true
-		// Save cursor position
-		te.saveCursor()
-		// Clear alternative screen
-		te.clearEntireScreen()
-		// Reset cursor to top-left
+
+		// Reset cursor to top-left for alt screen
 		te.state.CursorX = 0
 		te.state.CursorY = 0
+
 	} else if !useAlt && te.useAltScreen {
 		// Switch back to normal screen
+
+		// Debug logging
+		if te.logger != nil {
+			te.logger.Debugf("[switchAltScreen] Switching back to main screen")
+		}
+
 		te.useAltScreen = false
-		// Restore cursor position
-		te.restoreCursor()
+
+		// Mark the main screen as needing full redraw
+		// This ensures the main screen content is properly restored
+		te.screen.Dirty = true
+		for y := 0; y < te.screen.Height && y < len(te.screen.Buffer); y++ {
+			te.screen.MarkLineDirty(y)
+			// Mark all cells as dirty to force redraw
+			for x := 0; x < te.screen.Width && x < len(te.screen.Buffer[y]); x++ {
+				te.screen.Buffer[y][x].Dirty = true
+			}
+		}
+
+		// Force update dirty bounds
+		te.screen.mutex.Lock()
+		te.screen.DirtyMinX = 0
+		te.screen.DirtyMaxX = te.screen.Width - 1
+		te.screen.DirtyMinY = 0
+		te.screen.DirtyMaxY = te.screen.Height - 1
+		te.screen.mutex.Unlock()
+
+		// Note: Cursor position should remain where it was on the main screen
+		// The sequences ?1049 handles cursor save/restore separately
 	}
 }
 
