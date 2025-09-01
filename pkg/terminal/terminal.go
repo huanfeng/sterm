@@ -672,6 +672,7 @@ const (
 	ActionSendResponse
 	ActionSetTabStop
 	ActionClearTabStop
+	ActionReset
 )
 
 // handleGround processes characters in ground state
@@ -743,6 +744,9 @@ func (vt *VTParser) handleEscape(b byte, screen *Screen, state *TerminalState) [
 	case '>': // DECKPNM - Keypad Numeric Mode
 		vt.Reset()
 		return []Action{{Type: ActionSetMode, Data: "keypad_num"}}
+	case 'c': // RIS - Reset to Initial State
+		vt.Reset()
+		return []Action{{Type: ActionReset}}
 	default:
 		vt.Reset()
 		return nil
@@ -1616,6 +1620,8 @@ func (te *TerminalEmulator) executeAction(action Action) {
 		te.setMode(action.Data.(string))
 	case ActionBell:
 		// TODO: Implement bell
+	case ActionReset:
+		te.resetTerminal()
 	case ActionTab:
 		te.tab()
 	case ActionNewline:
@@ -2442,6 +2448,73 @@ func (te *TerminalEmulator) clearEntireScreen() {
 	if te.logger != nil {
 		te.logger.Debugf("[clearEntireScreen] End - scrollbackLen=%d, scrollPos=%d, cursor=(%d,%d), JustCleared=true",
 			len(te.scrollbackBuffer), te.scrollPosition, te.state.CursorX, te.state.CursorY)
+	}
+}
+
+// resetTerminal resets the terminal to its initial state
+func (te *TerminalEmulator) resetTerminal() {
+	// Debug logging
+	if te.logger != nil {
+		te.logger.Debugf("[resetTerminal] Resetting terminal to initial state")
+	}
+
+	// Exit scroll mode if active
+	if te.isScrolling {
+		te.ExitScrollMode()
+	}
+
+	// Clear the entire screen
+	te.clearEntireScreen()
+
+	// Reset cursor position to home
+	te.state.CursorX = 0
+	te.state.CursorY = 0
+
+	// Reset all terminal state to defaults
+	te.state.Attributes = DefaultTextAttributes()
+	te.state.ScrollTop = 0
+	te.state.ScrollBottom = te.state.Height - 1
+	te.state.LineWrap = true
+	te.state.MouseMode = MouseModeOff
+
+	// Clear saved state
+	te.savedState = nil
+
+	// Reset to main screen if using alternate screen
+	if te.useAltScreen {
+		te.useAltScreen = false
+		// Swap screens back
+		te.screen, te.altScreen = te.altScreen, te.screen
+	}
+
+	// Clear tab stops and set defaults (every 8 columns)
+	te.tabStops = make(map[int]bool)
+	for i := 8; i < te.state.Width; i += 8 {
+		te.tabStops[i] = true
+	}
+
+	// Clear the scrollback buffer
+	te.scrollbackBuffer = make([][]Cell, 0, te.scrollbackSize)
+	te.scrollOffset = 0
+	te.scrollPosition = 0
+
+	// Reset parser state
+	if te.parser != nil {
+		te.parser.Reset()
+	}
+
+	// Reset UTF-8 decoder
+	if te.utf8Decoder != nil {
+		te.utf8Decoder.Reset()
+	}
+
+	// Mark screen as needing full redraw
+	screen := te.GetScreen()
+	screen.JustCleared = true
+	screen.Dirty = true
+
+	if te.logger != nil {
+		te.logger.Debugf("[resetTerminal] Terminal reset complete")
 	}
 }
 

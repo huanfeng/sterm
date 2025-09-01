@@ -808,8 +808,20 @@ func (app *Application) handleKeyEvent(ev *tcell.EventKey) {
 			case 'h', 'H':
 				// Alt+H - Clear History
 				app.logDebug("Alt+H Clear History shortcut")
-				app.terminal.ClearScrollback()
-				app.updateStatusMessage("History cleared")
+				if err := app.ClearHistory(); err != nil {
+					app.updateStatusMessage(fmt.Sprintf("Clear history failed: %v", err))
+				} else {
+					app.updateStatusMessage("History cleared")
+				}
+				return
+			case 'x', 'X':
+				// Alt+X - Reset Terminal
+				app.logDebug("Alt+X Reset Terminal shortcut")
+				if err := app.ResetTerminal(); err != nil {
+					app.updateStatusMessage(fmt.Sprintf("Reset terminal failed: %v", err))
+				} else {
+					app.updateStatusMessage("Terminal reset")
+				}
 				return
 			case 'r', 'R':
 				// Alt+R - Reconnect
@@ -1715,6 +1727,91 @@ func (app *Application) ClearScreen() error {
 	return err
 }
 
+// ClearHistory clears the terminal history/scrollback buffer
+func (app *Application) ClearHistory() error {
+	if app.terminal == nil {
+		return fmt.Errorf("terminal not initialized")
+	}
+
+	// Lock to ensure thread safety
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	app.logDebug("=== ClearHistory Start ===")
+
+	// Exit scroll mode if active
+	if app.terminal.IsScrolling() {
+		app.logDebug("Exiting scroll mode")
+		app.terminal.ExitScrollMode()
+	}
+
+	// Clear the scrollback buffer
+	app.terminal.ClearScrollback()
+
+	// Force UI update
+	app.requestUIUpdate()
+
+	app.logDebug("=== ClearHistory End ===")
+
+	return nil
+}
+
+// ResetTerminal resets the terminal to its initial state
+func (app *Application) ResetTerminal() error {
+	if app.terminal == nil {
+		return fmt.Errorf("terminal not initialized")
+	}
+
+	// Lock to ensure thread safety
+	app.mu.Lock()
+	defer app.mu.Unlock()
+
+	app.logDebug("=== ResetTerminal Start ===")
+
+	// Exit scroll mode if active
+	if app.terminal.IsScrolling() {
+		app.logDebug("Exiting scroll mode")
+		app.terminal.ExitScrollMode()
+	}
+
+	// Send terminal reset sequence (ESC c)
+	// This resets the terminal to its initial state:
+	// - Clear screen
+	// - Reset cursor position to home
+	// - Reset all character attributes (colors, bold, etc.)
+	// - Reset character sets
+	// - Clear tab stops and reset to defaults
+	resetSeq := []byte{0x1B, 'c'}
+	err := app.terminal.ProcessOutput(resetSeq)
+	if err != nil {
+		app.logDebug("ProcessOutput error during reset: %v", err)
+		return fmt.Errorf("failed to reset terminal: %w", err)
+	}
+
+	// Also send SGR reset to ensure all graphic rendition is cleared
+	sgrResetSeq := []byte{0x1B, '[', '0', 'm'}
+	err = app.terminal.ProcessOutput(sgrResetSeq)
+	if err != nil {
+		app.logDebug("SGR reset error: %v", err)
+	}
+
+	// Clear the scrollback buffer as well
+	app.terminal.ClearScrollback()
+
+	// Force complete screen redraw
+	if app.screen != nil {
+		app.screen.Clear()
+		app.screen.Show()
+	}
+
+	// Force UI update
+	app.requestUIUpdate()
+
+	app.logDebug("=== ResetTerminal End ===")
+
+	return nil
+}
+
 // Disconnect disconnects from the serial port
 func (app *Application) Disconnect() error {
 	app.mu.Lock()
@@ -1871,17 +1968,31 @@ func (app *Application) setupMenu() {
 	// Session Management
 	app.mainMenu.AddItem("Clear Screen", "Alt+C", func() error {
 		app.logDebug("Menu: Clear Screen")
-		app.terminal.Clear()
+		if err := app.ClearScreen(); err != nil {
+			app.updateStatusMessage(fmt.Sprintf("Clear screen failed: %v", err))
+			return err
+		}
 		app.updateStatusMessage("Screen cleared")
-		app.updateDisplay()
 		return nil
 	})
 
 	app.mainMenu.AddItem("Clear History", "Alt+H", func() error {
 		app.logDebug("Menu: Clear History")
-		app.terminal.ClearScrollback()
+		if err := app.ClearHistory(); err != nil {
+			app.updateStatusMessage(fmt.Sprintf("Clear history failed: %v", err))
+			return err
+		}
 		app.updateStatusMessage("History cleared")
-		app.updateDisplay()
+		return nil
+	})
+
+	app.mainMenu.AddItem("Reset Terminal", "Alt+X", func() error {
+		app.logDebug("Menu: Reset Terminal")
+		if err := app.ResetTerminal(); err != nil {
+			app.updateStatusMessage(fmt.Sprintf("Reset terminal failed: %v", err))
+			return err
+		}
+		app.updateStatusMessage("Terminal reset")
 		return nil
 	})
 
